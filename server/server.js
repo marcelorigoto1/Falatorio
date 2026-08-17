@@ -26,7 +26,9 @@ const io = new Server(server, {
 /** @type {Map<string, {id:string,name:string,muted:boolean,sharing:boolean}>} */
 const users = new Map();
 
-const publicUser = (u) => ({ id: u.id, name: u.name, muted: u.muted, sharing: u.sharing });
+const publicUser = (u) => ({
+  id: u.id, name: u.name, muted: u.muted, sharing: u.sharing, deafened: u.deafened,
+});
 
 function sanitizeName(raw) {
   const name = String(raw || '').replace(/\s+/g, ' ').trim().slice(0, 24);
@@ -46,6 +48,7 @@ io.on('connection', (socket) => {
       id: socket.id,
       name: sanitizeName(payload.name),
       muted: !!payload.muted,
+      deafened: !!payload.deafened,
       sharing: false,
     };
     users.set(socket.id, user);
@@ -80,6 +83,7 @@ io.on('connection', (socket) => {
     const user = users.get(socket.id);
     if (!user) return;
     user.muted = !!state.muted;
+    user.deafened = !!state.deafened;
     user.sharing = !!state.sharing;
     io.to(ROOM).emit('peer-state', publicUser(user));
   });

@@ -18,12 +18,21 @@
     },
   ];
 
+  // Presets de qualidade do compartilhamento de tela.
+  //  - contentHint 'detail' preserva nitidez de texto; 'motion' prioriza fluidez.
+  const QUALITY = {
+    leve: { label: 'Leve', width: 1280, height: 720, fps: 15, bitrate: 800e3, hint: 'detail' },
+    media: { label: 'Equilibrada', width: 1920, height: 1080, fps: 30, bitrate: 2.5e6, hint: 'motion' },
+    alta: { label: 'Alta', width: 1920, height: 1080, fps: 60, bitrate: 5e6, hint: 'motion' },
+  };
+
   const desktop = window.falatorio || null; // ponte do Electron (preload.js)
   // ?debug=1 na URL liga os logs de sinalização no console.
   const DEBUG = /[?&]debug=1/.test(location.search);
   const log = (...a) => DEBUG && console.log('[falatorio]', ...a);
   const LS_NAME = 'falatorio.name';
   const LS_SERVER = 'falatorio.server';
+  const LS_QUALITY = 'falatorio.quality';
 
   // ── Elementos ────────────────────────────────────────────
   const $ = (id) => document.getElementById(id);
@@ -34,7 +43,9 @@
     app: $('app'), connDot: $('conn-dot'),
     peers: $('peers'), peerCount: $('peer-count'),
     micBtn: $('mic-btn'), micIcon: $('mic-icon'), micLabel: $('mic-label'),
+    deafBtn: $('deaf-btn'), deafIcon: $('deaf-icon'), deafLabel: $('deaf-label'),
     shareBtn: $('share-btn'), shareLabel: $('share-label'), leaveBtn: $('leave-btn'),
+    quality: $('quality-select'), viewBar: $('view-bar'),
     grid: $('grid'), stageEmpty: $('stage-empty'),
     messages: $('messages'), chatForm: $('chat-form'), chatInput: $('chat-input'),
     audioSink: $('audio-sink'),
@@ -48,11 +59,18 @@
   let micStream = null;      // MediaStream do microfone
   let screenStream = null;   // MediaStream da tela (quando compartilhando)
   let muted = false;
+  let deafened = false;        // não escuto ninguém
+  let mutedAntesDeSurdo = false;
   let sharing = false;
+  let quality = localStorage.getItem(LS_QUALITY) || 'media';
+  let viewing = 'todos';       // 'todos' ou o id de quem eu quero assistir
 
-  /** peerId -> { name, muted, sharing, pc, offerer, queue, makingOffer,
-   *              ignoreOffer, videoTransceiver, videoStream, audioEl, watchdog } */
+  /** peerId -> { name, muted, deafened, sharing, silenciado, pc, offerer, queue,
+   *              makingOffer, ignoreOffer, videoTransceiver, videoStream,
+   *              audioEl, watchdog } */
   const peers = new Map();
+
+  const sendState = () => socket && socket.emit('state', { muted, deafened, sharing });
 
   // ── Utilidades ───────────────────────────────────────────
   const escapeHtml = (s) => s.replace(/[&<>"']/g, (c) =>
@@ -127,7 +145,7 @@
         reject(new Error(`Não foi possível conectar: ${err.message}`));
       });
       socket.on('connect', () => {
-        socket.emit('join', { name, muted }, (res) => {
+        socket.emit('join', { name, muted, deafened }, (res) => {
           clearTimeout(timer);
           if (res && res.error) return reject(new Error(res.error));
           myId = res.id;
@@ -159,7 +177,7 @@
       el.connDot.classList.remove('off');
       el.connDot.classList.add('on');
       systemMessage('Reconectado.');
-      socket.emit('join', { name: myName, muted }, (res) => {
+      socket.emit('join', { name: myName, muted, deafened }, (res) => {
         if (!res || res.error) return;
         myId = res.id;
         peers.forEach((_, id) => removePeer(id));
@@ -176,6 +194,7 @@
       const peer = peers.get(p.id);
       if (!peer) return;
       peer.muted = p.muted;
+      peer.deafened = p.deafened;
       peer.sharing = p.sharing;
       syncTile(peer);
       renderPeers();
@@ -283,6 +302,7 @@
           el.audioSink.appendChild(peer.audioEl);
         }
         peer.audioEl.srcObject = stream;
+        peer.audioEl.muted = deafened || !!peer.silenciado;
         peer.audioEl.play().catch(() => {});
         watchSpeaking(stream, info.id);
       } else {
@@ -317,7 +337,9 @@
     if (!t || !t.sender) return;
     const track = sharing && screenStream ? screenStream.getVideoTracks()[0] : null;
     if (t.sender.track === track) return;
-    t.sender.replaceTrack(track).catch((err) => console.error('replaceTrack', err));
+    t.sender.replaceTrack(track)
+      .then(() => { if (track) applyQuality(); })
+      .catch((err) => console.error('replaceTrack', err));
   }
 
   /** Mostra ou esconde o quadro da tela de um participante. */
@@ -380,14 +402,68 @@
   const peerName = (id) => (id === myId ? `${myName} (você)` : (peers.get(id)?.name || 'Alguém'));
 
   // ── Microfone ────────────────────────────────────────────
-  el.micBtn.addEventListener('click', () => {
-    muted = !muted;
+  function setMuted(value) {
+    muted = value;
     micStream.getAudioTracks().forEach((t) => { t.enabled = !muted; });
     el.micBtn.classList.toggle('muted', muted);
     el.micIcon.textContent = muted ? '🔇' : '🎙️';
     el.micLabel.textContent = muted ? 'Ativar microfone' : 'Mudo';
-    socket.emit('state', { muted, sharing });
+  }
+
+  el.micBtn.addEventListener('click', () => {
+    setMuted(!muted);
+    if (!muted && deafened) setDeafened(false); // falar de novo tira o surdo
+    sendState();
     renderPeers();
+  });
+
+  // ── Ensurdecer: parar de ouvir todo mundo ────────────────
+  //
+  // Como no Discord, ensurdecer também fecha o seu microfone: se você não
+  // está ouvindo, não faz sentido continuar sendo ouvido sem saber.
+  function setDeafened(value) {
+    if (deafened === value) return;
+    deafened = value;
+    if (deafened) {
+      mutedAntesDeSurdo = muted;
+      setMuted(true);
+    } else {
+      setMuted(mutedAntesDeSurdo);
+    }
+    el.deafBtn.classList.toggle('muted', deafened);
+    el.deafIcon.textContent = deafened ? '🔇' : '🔈';
+    el.deafLabel.textContent = deafened ? 'Voltar a ouvir' : 'Ensurdecer';
+    applyAudioRouting();
+  }
+
+  el.deafBtn.addEventListener('click', () => {
+    setDeafened(!deafened);
+    sendState();
+    renderPeers();
+  });
+
+  /** Aplica quem eu escuto: o surdo global e os silenciados individualmente. */
+  function applyAudioRouting() {
+    peers.forEach((peer) => {
+      if (peer.audioEl) peer.audioEl.muted = deafened || !!peer.silenciado;
+    });
+  }
+
+  /** Silencia (ou volta a ouvir) uma pessoa específica — só para mim. */
+  function togglePeerMute(id) {
+    const peer = peers.get(id);
+    if (!peer) return;
+    peer.silenciado = !peer.silenciado;
+    applyAudioRouting();
+    renderPeers();
+    systemMessage(peer.silenciado
+      ? `Você silenciou ${peer.name} (só para você).`
+      : `Você voltou a ouvir ${peer.name}.`);
+  }
+
+  el.peers.addEventListener('click', (e) => {
+    const btn = e.target.closest('.peer-mute');
+    if (btn) togglePeerMute(btn.dataset.id);
   });
 
   // ── Compartilhamento de tela ─────────────────────────────
@@ -401,8 +477,13 @@
         if (!chosen) return;
         await desktop.chooseSource(chosen);
       }
+      const q = QUALITY[quality];
       screenStream = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: 30 },
+        video: {
+          width: { ideal: q.width, max: q.width },
+          height: { ideal: q.height, max: q.height },
+          frameRate: { ideal: q.fps, max: q.fps },
+        },
         audio: false,
       });
     } catch (err) {
@@ -417,11 +498,12 @@
     sharing = true;
     // Sem renegociar: a faixa entra no espaço de vídeo já negociado.
     peers.forEach(applyShareTo);
+    await applyQuality();
 
     el.shareBtn.classList.add('active');
     el.shareLabel.textContent = 'Parar de compartilhar';
     addTile(myId, `${myName} (você)`, screenStream, true);
-    socket.emit('state', { muted, sharing });
+    sendState();
     renderPeers();
   }
 
@@ -434,8 +516,53 @@
     el.shareBtn.classList.remove('active');
     el.shareLabel.textContent = 'Compartilhar tela';
     removeTile(myId);
-    socket.emit('state', { muted, sharing });
+    sendState();
     renderPeers();
+  }
+
+  // ── Qualidade do compartilhamento ────────────────────────
+  //
+  // Dois ajustes, sem renegociar nada:
+  //  - applyConstraints: manda a captura entregar menos pixels/quadros;
+  //  - setParameters: põe um teto de banda no envio para cada pessoa.
+  el.quality.value = quality;
+  el.quality.addEventListener('change', async () => {
+    quality = el.quality.value;
+    localStorage.setItem(LS_QUALITY, quality);
+    await applyQuality();
+    if (sharing) systemMessage(`Qualidade do compartilhamento: ${QUALITY[quality].label}.`);
+  });
+
+  async function applyQuality() {
+    const q = QUALITY[quality];
+
+    if (screenStream) {
+      const track = screenStream.getVideoTracks()[0];
+      if (track) {
+        track.contentHint = q.hint;
+        try {
+          await track.applyConstraints({
+            width: { max: q.width },
+            height: { max: q.height },
+            frameRate: { max: q.fps },
+          });
+        } catch (err) {
+          log('applyConstraints falhou', err.message);
+        }
+      }
+    }
+
+    peers.forEach((peer) => {
+      const sender = peer.videoTransceiver && peer.videoTransceiver.sender;
+      if (!sender) return;
+      const params = sender.getParameters();
+      if (!params.encodings || !params.encodings.length) params.encodings = [{}];
+      params.encodings[0].maxBitrate = q.bitrate;
+      params.encodings[0].maxFramerate = q.fps;
+      // Em tela compartilhada, nitidez costuma importar mais que fluidez.
+      params.degradationPreference = q.hint === 'detail' ? 'maintain-resolution' : 'balanced';
+      sender.setParameters(params).catch((err) => log('setParameters', err.message));
+    });
   }
 
   // Seletor de janela/tela do Electron
@@ -467,6 +594,7 @@
     const tile = document.createElement('div');
     tile.className = 'tile';
     tile.dataset.peer = id;
+    tile.title = 'Clique para ver só esta tela';
 
     const video = document.createElement('video');
     video.autoplay = true;
@@ -479,15 +607,71 @@
     tag.className = 'tile-label';
     tag.textContent = isLocal ? `${label} — compartilhando` : label;
 
-    tile.append(video, tag);
+    const hint = document.createElement('div');
+    hint.className = 'tile-hint';
+    hint.textContent = 'clique para focar';
+
+    tile.append(video, tag, hint);
+    tile.addEventListener('click', () => setViewing(viewing === id ? 'todos' : id));
+
     el.grid.appendChild(tile);
-    el.stageEmpty.hidden = true;
+    applyView();
   }
 
   function removeTile(id) {
     const tile = el.grid.querySelector(`.tile[data-peer="${CSS.escape(String(id))}"]`);
     if (tile) tile.remove();
-    el.stageEmpty.hidden = el.grid.childElementCount > 0;
+    if (viewing === id) viewing = 'todos';
+    applyView();
+  }
+
+  // ── Escolher qual tela assistir ──────────────────────────
+  function setViewing(target) {
+    viewing = target;
+    applyView();
+  }
+
+  /** Reconstrói a barra de abas e mostra/esconde os quadros conforme a escolha. */
+  function applyView() {
+    const tiles = [...el.grid.querySelectorAll('.tile')];
+
+    // Se quem eu assistia parou de compartilhar, volto para "Todos".
+    if (viewing !== 'todos' && !tiles.some((t) => t.dataset.peer === viewing)) {
+      viewing = 'todos';
+    }
+
+    tiles.forEach((tile) => {
+      const focado = viewing === 'todos' || tile.dataset.peer === viewing;
+      tile.hidden = !focado;
+      tile.classList.toggle('focused', viewing === tile.dataset.peer);
+      const video = tile.querySelector('video');
+      // Pausar o que não está à vista poupa CPU (a faixa continua chegando).
+      if (video) { if (focado) video.play().catch(() => {}); else video.pause(); }
+    });
+
+    el.grid.classList.toggle('focus-mode', viewing !== 'todos');
+    el.stageEmpty.hidden = tiles.length > 0;
+
+    // Abas: só fazem sentido com duas ou mais telas.
+    if (tiles.length < 2) {
+      el.viewBar.hidden = true;
+      el.viewBar.innerHTML = '';
+      return;
+    }
+
+    el.viewBar.hidden = false;
+    el.viewBar.innerHTML = '<span class="view-label">Assistindo</span>';
+    const abas = [{ id: 'todos', nome: `Todas (${tiles.length})` }]
+      .concat(tiles.map((t) => ({ id: t.dataset.peer, nome: peerName(t.dataset.peer) })));
+
+    abas.forEach(({ id, nome }) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'view-tab' + (viewing === id ? ' on' : '');
+      btn.textContent = nome;
+      btn.addEventListener('click', () => setViewing(id));
+      el.viewBar.appendChild(btn);
+    });
   }
 
   // ── Chat ─────────────────────────────────────────────────
@@ -532,18 +716,34 @@
 
   function renderPeers() {
     const all = [
-      { id: myId, name: `${myName} (você)`, muted, sharing },
-      ...[...peers.values()].map((p) => ({ id: p.id, name: p.name, muted: p.muted, sharing: p.sharing })),
+      { id: myId, name: `${myName} (você)`, muted, deafened, sharing, eu: true },
+      ...[...peers.values()].map((p) => ({
+        id: p.id, name: p.name, muted: p.muted, deafened: p.deafened,
+        sharing: p.sharing, silenciado: p.silenciado,
+      })),
     ];
     el.peerCount.textContent = String(all.length);
     el.peers.innerHTML = '';
+
     all.forEach((p) => {
       const li = document.createElement('li');
-      if (speaking.has(p.id === myId ? 'me' : p.id) && !p.muted) li.classList.add('speaking');
+      if (p.eu) li.classList.add('self');
+      if (speaking.has(p.eu ? 'me' : p.id) && !p.muted && !p.silenciado) li.classList.add('speaking');
+
+      const tags = [
+        p.sharing ? '🖥️' : '',
+        p.deafened ? '🎧' : '',
+        p.muted ? '🔇' : '',
+      ].join('');
+
       li.innerHTML = `
         <span class="avatar" style="background:${colorFor(p.name)}">${escapeHtml(initials(p.name))}</span>
         <span class="peer-name">${escapeHtml(p.name)}</span>
-        <span class="peer-tags">${p.sharing ? '🖥️' : ''}${p.muted ? '🔇' : ''}</span>`;
+        <span class="peer-tags">${tags}</span>
+        <button class="peer-mute${p.silenciado ? ' on' : ''}" type="button" data-id="${p.id}"
+                title="${p.silenciado ? 'Voltar a ouvir' : 'Silenciar só para mim'}">
+          ${p.silenciado ? '🔇' : '🔊'}
+        </button>`;
       el.peers.appendChild(li);
     });
   }

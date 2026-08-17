@@ -47,9 +47,22 @@
       <button id="mic-btn" class="ctl" type="button">
         <span class="ctl-icon" id="mic-icon">🎙️</span><span id="mic-label">Mudo</span>
       </button>
+      <button id="deaf-btn" class="ctl" type="button" title="Para de ouvir todo mundo">
+        <span class="ctl-icon" id="deaf-icon">🔈</span><span id="deaf-label">Ensurdecer</span>
+      </button>
       <button id="share-btn" class="ctl" type="button">
         <span class="ctl-icon">🖥️</span><span id="share-label">Compartilhar tela</span>
       </button>
+
+      <label class="ctl ctl-field" for="quality-select" title="Qualidade da sua tela compartilhada">
+        <span class="ctl-icon">⚙️</span>
+        <select id="quality-select">
+          <option value="leve" title="Para internet fraca; mantém texto legível">Leve — 720p 15fps</option>
+          <option value="media" selected title="Padrão, bom para quase tudo">Média — 1080p 30fps</option>
+          <option value="alta" title="Para jogos e vídeo; usa bem mais banda">Alta — 1080p 60fps</option>
+        </select>
+      </label>
+
       <button id="leave-btn" class="ctl danger" type="button">
         <span class="ctl-icon">⏻</span><span>Sair</span>
       </button>
@@ -57,13 +70,17 @@
   </aside>
 
   <main class="main">
-    <section id="stage" class="stage">
-      <div id="stage-empty" class="stage-empty">
-        <p>Ninguém está compartilhando tela.</p>
-        <p class="sub">Clique em <strong>Compartilhar tela</strong> para começar.</p>
-      </div>
-      <div id="grid" class="grid"></div>
-    </section>
+    <div class="stage-wrap">
+      <div id="view-bar" class="view-bar" hidden></div>
+
+      <section id="stage" class="stage">
+        <div id="stage-empty" class="stage-empty">
+          <p>Ninguém está compartilhando tela.</p>
+          <p class="sub">Clique em <strong>Compartilhar tela</strong> para começar.</p>
+        </div>
+        <div id="grid" class="grid"></div>
+      </section>
+    </div>
 
     <section class="chat">
       <div id="messages" class="messages"></div>
