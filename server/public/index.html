@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Falatório</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%235b8cff'/%3E%3Cpath d='M16 7a4 4 0 0 1 4 4v5a4 4 0 0 1-8 0v-5a4 4 0 0 1 4-4Zm-7 9a7 7 0 0 0 6 6.9V26h2v-3.1A7 7 0 0 0 23 16h-2a5 5 0 0 1-10 0H9Z' fill='%23fff'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<!-- ── Tela de entrada ───────────────────────────────────────── -->
+<div id="gate" class="gate">
+  <form id="gate-form" class="gate-card">
+    <h1 class="logo">Falatório</h1>
+    <p class="tagline">Voz, texto e tela — só entre amigos.</p>
+
+    <label for="name-input">Seu nome</label>
+    <input id="name-input" type="text" maxlength="24" placeholder="Como te chamam?" autocomplete="off" required />
+
+    <label for="server-input">Servidor</label>
+    <input id="server-input" type="text" placeholder="https://meu-servidor.onrender.com" autocomplete="off" />
+    <p class="hint" id="server-hint"></p>
+
+    <button type="submit" id="join-btn">Entrar na sala</button>
+    <p class="error" id="gate-error" hidden></p>
+  </form>
+</div>
+
+<!-- ── App ───────────────────────────────────────────────────── -->
+<div id="app" class="app" hidden>
+
+  <aside class="sidebar">
+    <div class="sidebar-head">
+      <span class="logo-sm">Falatório</span>
+      <span id="conn-dot" class="dot" title="conectando…"></span>
+    </div>
+
+    <div class="channel">
+      <span class="channel-icon">#</span> geral
+    </div>
+
+    <div class="peers-title">Na sala — <span id="peer-count">0</span></div>
+    <ul id="peers" class="peers"></ul>
+
+    <div class="controls">
+      <button id="mic-btn" class="ctl" type="button">
+        <span class="ctl-icon" id="mic-icon">🎙️</span><span id="mic-label">Mudo</span>
+      </button>
+      <button id="share-btn" class="ctl" type="button">
+        <span class="ctl-icon">🖥️</span><span id="share-label">Compartilhar tela</span>
+      </button>
+      <button id="leave-btn" class="ctl danger" type="button">
+        <span class="ctl-icon">⏻</span><span>Sair</span>
+      </button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <section id="stage" class="stage">
+      <div id="stage-empty" class="stage-empty">
+        <p>Ninguém está compartilhando tela.</p>
+        <p class="sub">Clique em <strong>Compartilhar tela</strong> para começar.</p>
+      </div>
+      <div id="grid" class="grid"></div>
+    </section>
+
+    <section class="chat">
+      <div id="messages" class="messages"></div>
+      <form id="chat-form" class="chat-form">
+        <input id="chat-input" type="text" placeholder="Mensagem em #geral" maxlength="2000" autocomplete="off" />
+        <button type="submit">Enviar</button>
+      </form>
+    </section>
+  </main>
+
+  <div id="audio-sink" class="audio-sink"></div>
+</div>
+
+<!-- ── Seletor de tela (só no app desktop) ───────────────────── -->
+<div id="picker" class="picker" hidden>
+  <div class="picker-card">
+    <h2>O que você quer compartilhar?</h2>
+    <div id="picker-list" class="picker-list"></div>
+    <button id="picker-cancel" type="button" class="ctl">Cancelar</button>
+  </div>
+</div>
+
+<script src="vendor/socket.io.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

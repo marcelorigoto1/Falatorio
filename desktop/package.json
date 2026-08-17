@@ -1,0 +1,54 @@
+{
+  "name": "falatorio",
+  "productName": "Falatorio",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Voz, texto e compartilhamento de tela para grupos pequenos",
+  "main": "main.js",
+  "scripts": {
+    "sync": "node sync-ui.js",
+    "start": "npm run sync && electron .",
+    "dist": "npm run sync && electron-builder",
+    "dist:win": "npm run sync && electron-builder --win",
+    "dist:mac": "npm run sync && electron-builder --mac",
+    "dist:linux": "npm run sync && electron-builder --linux"
+  },
+  "devDependencies": {
+    "electron": "^31.3.1",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.falatorio.app",
+    "productName": "Falatorio",
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.social-networking",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "O Falatorio usa o microfone para o chat de voz.",
+        "NSCameraUsageDescription": "Nao usamos camera, apenas compartilhamento de tela."
+      }
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Network"
+    }
+  }
+}

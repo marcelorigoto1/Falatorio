@@ -1,0 +1,17 @@
+{
+  "name": "falatorio-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Servidor de sinalizacao (WebRTC + chat) do Falatorio",
+  "main": "server.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5"
+  }
+}
