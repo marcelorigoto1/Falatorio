@@ -71,6 +71,10 @@ input[type="text"] {
 }
 input[type="text"]:focus { border-color: var(--accent); }
 
+/* O bloco da senha é um filho a mais no formulário: precisa empilhar
+   rótulo e campo igual aos outros. */
+#password-row { display: flex; flex-direction: column; gap: 6px; }
+
 .hint { margin: 6px 0 0; font-size: 12px; color: var(--text-dim); }
 .error { margin: 12px 0 0; color: var(--danger); font-size: 13px; }
 
@@ -217,6 +221,31 @@ input[type="text"]:focus { border-color: var(--accent); }
   cursor: pointer;
 }
 .ctl-field select option { background: var(--bg-3); color: var(--text); }
+
+.ctl-check { cursor: pointer; font-size: 13px; }
+.ctl-check input { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
+
+/* Volume do som de cada transmissão, dentro do quadro */
+.tile-audio {
+  position: absolute; right: 8px; top: 8px;
+  display: flex; align-items: center; gap: 6px;
+  background: rgba(0, 0, 0, .68);
+  padding: 5px 9px;
+  border-radius: 999px;
+  opacity: .25;
+  transition: opacity .15s;
+}
+.tile:hover .tile-audio, .tile-audio:focus-within { opacity: 1; }
+
+.tile-audio button {
+  background: none; border: 0; color: var(--text);
+  font-size: 13px; padding: 0; line-height: 1; cursor: pointer;
+}
+.tile-audio input[type="range"] {
+  width: 74px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
 
 .main {
   display: grid;

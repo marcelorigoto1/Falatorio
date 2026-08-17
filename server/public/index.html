@@ -22,6 +22,11 @@
     <input id="server-input" type="text" placeholder="https://meu-servidor.onrender.com" autocomplete="off" />
     <p class="hint" id="server-hint"></p>
 
+    <div id="password-row" hidden>
+      <label for="password-input">Senha da sala</label>
+      <input id="password-input" type="password" placeholder="senha combinada com a galera" autocomplete="current-password" />
+    </div>
+
     <button type="submit" id="join-btn">Entrar na sala</button>
     <p class="error" id="gate-error" hidden></p>
   </form>
@@ -54,12 +59,26 @@
         <span class="ctl-icon">🖥️</span><span id="share-label">Compartilhar tela</span>
       </button>
 
-      <label class="ctl ctl-field" for="quality-select" title="Qualidade da sua tela compartilhada">
+      <label class="ctl ctl-check" for="share-audio" title="Envia o som do jogo/vídeo junto com a imagem">
+        <input type="checkbox" id="share-audio" checked />
+        <span>Enviar o som junto</span>
+      </label>
+
+      <label class="ctl ctl-field" for="quality-select" title="Qualidade da SUA tela compartilhada">
         <span class="ctl-icon">⚙️</span>
         <select id="quality-select">
           <option value="leve" title="Para internet fraca; mantém texto legível">Leve — 720p 15fps</option>
           <option value="media" selected title="Padrão, bom para quase tudo">Média — 1080p 30fps</option>
           <option value="alta" title="Para jogos e vídeo; usa bem mais banda">Alta — 1080p 60fps</option>
+        </select>
+      </label>
+
+      <label class="ctl ctl-field" for="buffer-select" title="Quanto segurar a imagem antes de exibir, para ela não engasgar">
+        <span class="ctl-icon">⏱️</span>
+        <select id="buffer-select">
+          <option value="0">Sem atraso (tempo real)</option>
+          <option value="500" selected>Atraso leve — 0,5s</option>
+          <option value="1500">Bem suave — 1,5s</option>
         </select>
       </label>
 

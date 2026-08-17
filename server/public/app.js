@@ -33,6 +33,8 @@
   const LS_NAME = 'falatorio.name';
   const LS_SERVER = 'falatorio.server';
   const LS_QUALITY = 'falatorio.quality';
+  const LS_BUFFER = 'falatorio.buffer';
+  const LS_SHARE_AUDIO = 'falatorio.shareAudio';
 
   // ── Elementos ────────────────────────────────────────────
   const $ = (id) => document.getElementById(id);
@@ -40,12 +42,14 @@
     gate: $('gate'), gateForm: $('gate-form'), gateError: $('gate-error'),
     nameInput: $('name-input'), serverInput: $('server-input'),
     serverHint: $('server-hint'), joinBtn: $('join-btn'),
+    passwordRow: $('password-row'), passwordInput: $('password-input'),
     app: $('app'), connDot: $('conn-dot'),
     peers: $('peers'), peerCount: $('peer-count'),
     micBtn: $('mic-btn'), micIcon: $('mic-icon'), micLabel: $('mic-label'),
     deafBtn: $('deaf-btn'), deafIcon: $('deaf-icon'), deafLabel: $('deaf-label'),
     shareBtn: $('share-btn'), shareLabel: $('share-label'), leaveBtn: $('leave-btn'),
-    quality: $('quality-select'), viewBar: $('view-bar'),
+    quality: $('quality-select'), buffer: $('buffer-select'),
+    shareAudioBox: $('share-audio'), viewBar: $('view-bar'),
     grid: $('grid'), stageEmpty: $('stage-empty'),
     messages: $('messages'), chatForm: $('chat-form'), chatInput: $('chat-input'),
     audioSink: $('audio-sink'),
@@ -62,7 +66,9 @@
   let deafened = false;        // não escuto ninguém
   let mutedAntesDeSurdo = false;
   let sharing = false;
+  let sharingAudio = false;    // estou enviando o som da minha tela
   let quality = localStorage.getItem(LS_QUALITY) || 'media';
+  let bufferMs = Number(localStorage.getItem(LS_BUFFER) ?? 500);
   let viewing = 'todos';       // 'todos' ou o id de quem eu quero assistir
 
   /** peerId -> { name, muted, deafened, sharing, silenciado, pc, offerer, queue,
@@ -70,7 +76,8 @@
    *              audioEl, watchdog } */
   const peers = new Map();
 
-  const sendState = () => socket && socket.emit('state', { muted, deafened, sharing });
+  const sendState = () => socket
+    && socket.emit('state', { muted, deafened, sharing, sharingAudio });
 
   // ── Utilidades ───────────────────────────────────────────
   const escapeHtml = (s) => s.replace(/[&<>"']/g, (c) =>
@@ -102,34 +109,65 @@
     ? 'Endereço do servidor onde vocês se encontram (o mesmo para todos).'
     : 'Deixe como está para usar este mesmo servidor.';
 
+  // Pergunta ao servidor se a sala tem senha, para mostrar o campo certo.
+  async function checarSenhaNecessaria(url) {
+    if (!url) return;
+    try {
+      const resp = await fetch(url.replace(/\/$/, '') + '/config', { cache: 'no-store' });
+      const cfg = await resp.json();
+      pedirSenha(!!cfg.precisaSenha);
+    } catch { /* servidor fora do ar ou antigo: descobrimos ao entrar */ }
+  }
+
+  function pedirSenha(precisa) {
+    el.passwordRow.hidden = !precisa;
+  }
+
+  checarSenhaNecessaria(el.serverInput.value.trim());
+  el.serverInput.addEventListener('change', () => checarSenhaNecessaria(el.serverInput.value.trim()));
+
   el.gateForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     el.gateError.hidden = true;
     el.joinBtn.disabled = true;
     el.joinBtn.textContent = 'Conectando…';
     try {
-      await join(el.nameInput.value.trim(), el.serverInput.value.trim());
+      await join(
+        el.nameInput.value.trim(),
+        el.serverInput.value.trim(),
+        el.passwordInput.value,
+      );
     } catch (err) {
       el.gateError.textContent = err.message || String(err);
       el.gateError.hidden = false;
+      if (err.precisaSenha) {
+        pedirSenha(true);
+        el.passwordInput.value = '';
+        el.passwordInput.focus();
+      }
       el.joinBtn.disabled = false;
       el.joinBtn.textContent = 'Entrar na sala';
     }
   });
 
   // ── Entrar ───────────────────────────────────────────────
-  async function join(name, serverUrl) {
+  let minhaSenha = '';
+
+  async function join(name, serverUrl, password) {
     if (!name) throw new Error('Escolha um nome.');
     if (!serverUrl) throw new Error('Informe o endereço do servidor.');
+    minhaSenha = password || '';
 
     // Microfone antes de tudo: sem ele não há voz.
-    try {
-      micStream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-        video: false,
-      });
-    } catch {
-      throw new Error('Não consegui acessar o microfone. Verifique a permissão do sistema.');
+    if (!micStream) {
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+          video: false,
+        });
+      } catch {
+        throw new Error('Não consegui acessar o microfone. Verifique a permissão do sistema.');
+      }
     }
 
     myName = name;
@@ -145,9 +183,15 @@
         reject(new Error(`Não foi possível conectar: ${err.message}`));
       });
       socket.on('connect', () => {
-        socket.emit('join', { name, muted, deafened }, (res) => {
+        socket.emit('join', { name, muted, deafened, password: minhaSenha }, (res) => {
           clearTimeout(timer);
-          if (res && res.error) return reject(new Error(res.error));
+          if (res && res.error) {
+            const erro = new Error(res.error);
+            erro.precisaSenha = !!res.precisaSenha;
+            socket.disconnect(); // não deixa a conexão pendurada após recusa
+            socket = null;
+            return reject(erro);
+          }
           myId = res.id;
           res.peers.forEach((p) => addPeer(p));
           resolve();
@@ -177,8 +221,11 @@
       el.connDot.classList.remove('off');
       el.connDot.classList.add('on');
       systemMessage('Reconectado.');
-      socket.emit('join', { name: myName, muted, deafened }, (res) => {
-        if (!res || res.error) return;
+      socket.emit('join', { name: myName, muted, deafened, password: minhaSenha }, (res) => {
+        if (!res || res.error) {
+          if (res && res.error) systemMessage(`Não consegui voltar para a sala: ${res.error}`);
+          return;
+        }
         myId = res.id;
         peers.forEach((_, id) => removePeer(id));
         res.peers.forEach((p) => addPeer(p));
@@ -196,6 +243,7 @@
       peer.muted = p.muted;
       peer.deafened = p.deafened;
       peer.sharing = p.sharing;
+      peer.sharingAudio = p.sharingAudio;
       syncTile(peer);
       renderPeers();
     });
@@ -237,19 +285,26 @@
       ignoreOffer: false,
       settingRemoteAnswer: false,
       videoTransceiver: null,
+      screenAudioTransceiver: null,
       videoStream: null,
-      audioEl: null,
+      audioEl: null,          // voz da pessoa
+      screenAudioEl: null,    // som da tela que ela compartilha
+      volume: 1,
+      screenAudioMuted: false,
     };
     peers.set(info.id, peer);
 
+    // Ordem importa: canal 1 = voz, canal 2 = som da tela, canal 3 = imagem.
+    // Os dois lados montam na mesma ordem, então as m-lines batem certinho.
     micStream.getAudioTracks().forEach((t) => pc.addTrack(t, micStream));
 
-    // Quem oferece cria o espaço do vídeo; quem responde adota o espaço que
-    // vem na oferta (adoptVideo). Assim os dois lados usam a mesma m-line e
-    // conseguem enviar tela sem renegociar.
+    // Quem oferece cria os espaços; quem responde adota os que vêm na oferta
+    // (adoptChannels). Assim ninguém precisa renegociar depois.
     if (peer.offerer) {
+      peer.screenAudioTransceiver = pc.addTransceiver('audio', { direction: 'sendrecv' });
       peer.videoTransceiver = pc.addTransceiver('video', { direction: 'sendrecv' });
       applyShareTo(peer);
+      applyBufferTo(peer);
     }
 
     async function negotiate() {
@@ -295,7 +350,23 @@
       const track = ev.track;
       const stream = ev.streams[0] || new MediaStream([track]);
 
-      if (track.kind === 'audio') {
+      if (track.kind === 'video') {
+        // A faixa de vídeo chega logo na conexão e fica em silêncio até a
+        // pessoa compartilhar; o quadro só aparece quando ela compartilha.
+        peer.videoStream = stream;
+        track.addEventListener('unmute', () => syncTile(peer));
+        track.addEventListener('mute', () => removeTile(info.id));
+        syncTile(peer);
+        return;
+      }
+
+      // Dois canais de áudio chegam: o primeiro é a voz, o segundo é o som
+      // da tela compartilhada. A ordem é a mesma nos dois lados.
+      const canaisDeAudio = pc.getTransceivers()
+        .filter((t) => t.receiver && t.receiver.track && t.receiver.track.kind === 'audio');
+      const ehVoz = canaisDeAudio.indexOf(ev.transceiver) <= 0;
+
+      if (ehVoz) {
         if (!peer.audioEl) {
           peer.audioEl = document.createElement('audio');
           peer.audioEl.autoplay = true;
@@ -306,46 +377,85 @@
         peer.audioEl.play().catch(() => {});
         watchSpeaking(stream, info.id);
       } else {
-        // A faixa de vídeo chega logo na conexão e fica em silêncio até a
-        // pessoa compartilhar; o quadro só aparece quando ela compartilha.
-        peer.videoStream = stream;
+        if (!peer.screenAudioEl) {
+          peer.screenAudioEl = document.createElement('audio');
+          peer.screenAudioEl.autoplay = true;
+          el.audioSink.appendChild(peer.screenAudioEl);
+        }
+        peer.screenAudioEl.srcObject = stream;
+        peer.screenAudioEl.volume = peer.volume;
+        peer.screenAudioEl.muted = deafened || peer.screenAudioMuted;
+        peer.screenAudioEl.play().catch(() => {});
         track.addEventListener('unmute', () => syncTile(peer));
-        track.addEventListener('mute', () => removeTile(info.id));
-        syncTile(peer);
+        track.addEventListener('mute', () => syncTile(peer));
       }
     };
   }
 
   /**
-   * Localiza o transceiver de vídeo já associado a uma m-line e garante que
-   * ele possa enviar. Precisa rodar ANTES de criar a resposta, senão a
-   * resposta sai como "recvonly" e nunca conseguimos mandar nossa tela.
+   * Localiza os canais já associados a m-lines e garante que possam enviar.
+   * Precisa rodar ANTES de criar a resposta, senão a resposta sai como
+   * "só recebo" e nunca conseguimos mandar nossa tela nem o som dela.
    */
-  function adoptVideo(peer) {
-    const t = peer.pc.getTransceivers().find((x) =>
-      (x.receiver && x.receiver.track && x.receiver.track.kind === 'video')
-      || (x.sender && x.sender.track && x.sender.track.kind === 'video'));
-    if (!t) return;
-    peer.videoTransceiver = t;
-    if (t.direction !== 'sendrecv') t.direction = 'sendrecv';
+  function adoptChannels(peer) {
+    const ts = peer.pc.getTransceivers();
+    const audios = ts.filter((t) => t.receiver && t.receiver.track && t.receiver.track.kind === 'audio');
+    const videos = ts.filter((t) => t.receiver && t.receiver.track && t.receiver.track.kind === 'video');
+
+    if (videos[0]) peer.videoTransceiver = videos[0];
+    if (audios[1]) peer.screenAudioTransceiver = audios[1]; // audios[0] = voz
+
+    [peer.videoTransceiver, peer.screenAudioTransceiver].forEach((t) => {
+      if (t && t.direction !== 'sendrecv') t.direction = 'sendrecv';
+    });
+
     applyShareTo(peer);
+    applyBufferTo(peer);
   }
 
   /** Deixa o que estamos (ou não) compartilhando refletido neste par. */
   function applyShareTo(peer) {
-    const t = peer.videoTransceiver;
-    if (!t || !t.sender) return;
-    const track = sharing && screenStream ? screenStream.getVideoTracks()[0] : null;
-    if (t.sender.track === track) return;
-    t.sender.replaceTrack(track)
-      .then(() => { if (track) applyQuality(); })
-      .catch((err) => console.error('replaceTrack', err));
+    const trocar = (transceiver, track) => {
+      if (!transceiver || !transceiver.sender) return false;
+      if (transceiver.sender.track === track) return false;
+      transceiver.sender.replaceTrack(track)
+        .catch((err) => console.error('replaceTrack', err));
+      return true;
+    };
+
+    const video = sharing && screenStream ? screenStream.getVideoTracks()[0] || null : null;
+    const som = sharing && screenStream ? screenStream.getAudioTracks()[0] || null : null;
+
+    const mudouVideo = trocar(peer.videoTransceiver, video);
+    trocar(peer.screenAudioTransceiver, som);
+    if (mudouVideo && video) applyQuality();
+  }
+
+  /**
+   * Buffer de reprodução: segura a tela (e o som dela) por alguns
+   * milissegundos antes de exibir, o que absorve os engasgos da internet.
+   * A voz fica de fora de propósito — conversa precisa ser em tempo real.
+   */
+  function applyBufferTo(peer) {
+    [peer.videoTransceiver, peer.screenAudioTransceiver].forEach((t) => {
+      if (!t || !t.receiver) return;
+      try {
+        if ('jitterBufferTarget' in t.receiver) t.receiver.jitterBufferTarget = bufferMs;
+        else if ('playoutDelayHint' in t.receiver) t.receiver.playoutDelayHint = bufferMs / 1000;
+      } catch (err) {
+        log('buffer não aplicado', err.message);
+      }
+    });
   }
 
   /** Mostra ou esconde o quadro da tela de um participante. */
   function syncTile(peer) {
-    if (peer.sharing && peer.videoStream) addTile(peer.id, peer.name, peer.videoStream);
-    else removeTile(peer.id);
+    if (peer.sharing && peer.videoStream) {
+      addTile(peer.id, peer.name, peer.videoStream, { peer });
+      syncTileAudio(peer);
+    } else {
+      removeTile(peer.id);
+    }
   }
 
   function onSignal({ from, description, candidate }) {
@@ -372,7 +482,7 @@
         peer.ignoreOffer = false;
 
         await pc.setRemoteDescription(description);
-        adoptVideo(peer);
+        adoptChannels(peer);
 
         if (description.type === 'offer') {
           await pc.setLocalDescription();
@@ -395,6 +505,7 @@
     clearInterval(peer.watchdog);
     try { peer.pc.close(); } catch { /* já fechado */ }
     if (peer.audioEl) peer.audioEl.remove();
+    if (peer.screenAudioEl) peer.screenAudioEl.remove();
     removeTile(id);
     peers.delete(id);
   }
@@ -446,6 +557,10 @@
   function applyAudioRouting() {
     peers.forEach((peer) => {
       if (peer.audioEl) peer.audioEl.muted = deafened || !!peer.silenciado;
+      if (peer.screenAudioEl) {
+        peer.screenAudioEl.muted = deafened || peer.screenAudioMuted;
+        peer.screenAudioEl.volume = peer.volume;
+      }
     });
   }
 
@@ -478,14 +593,26 @@
         await desktop.chooseSource(chosen);
       }
       const q = QUALITY[quality];
-      screenStream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          width: { ideal: q.width, max: q.width },
-          height: { ideal: q.height, max: q.height },
-          frameRate: { ideal: q.fps, max: q.fps },
-        },
-        audio: false,
-      });
+      const querSom = el.shareAudioBox.checked;
+      const video = {
+        width: { ideal: q.width, max: q.width },
+        height: { ideal: q.height, max: q.height },
+        frameRate: { ideal: q.fps, max: q.fps },
+      };
+      // Som do jogo/vídeo: sem os filtros de voz, que estragariam a música.
+      const audio = querSom
+        ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+        : false;
+
+      try {
+        screenStream = await navigator.mediaDevices.getDisplayMedia({ video, audio });
+      } catch (err) {
+        // Alguns sistemas recusam a captura quando pedimos som junto.
+        if (querSom && err.name !== 'NotAllowedError') {
+          log('captura com som falhou, tentando sem:', err.message);
+          screenStream = await navigator.mediaDevices.getDisplayMedia({ video, audio: false });
+        } else throw err;
+      }
     } catch (err) {
       if (err && err.name === 'NotAllowedError') return; // cancelou, tudo bem
       systemMessage(`Não deu para compartilhar a tela: ${err.message}`);
@@ -495,21 +622,32 @@
     const track = screenStream.getVideoTracks()[0];
     track.addEventListener('ended', () => stopShare());
 
+    const somDaTela = screenStream.getAudioTracks()[0] || null;
+    sharingAudio = !!somDaTela;
+    if (somDaTela) somDaTela.addEventListener('ended', () => { sharingAudio = false; sendState(); });
+
     sharing = true;
-    // Sem renegociar: a faixa entra no espaço de vídeo já negociado.
+    // Sem renegociar: as faixas entram nos espaços já negociados.
     peers.forEach(applyShareTo);
     await applyQuality();
 
     el.shareBtn.classList.add('active');
     el.shareLabel.textContent = 'Parar de compartilhar';
-    addTile(myId, `${myName} (você)`, screenStream, true);
+    addTile(myId, `${myName} (você)`, screenStream, { isLocal: true });
     sendState();
     renderPeers();
+
+    if (el.shareAudioBox.checked && !somDaTela) {
+      systemMessage(desktop
+        ? 'Sua tela está sendo compartilhada, mas sem som — o sistema não liberou a captura de áudio (isso é comum fora do Windows).'
+        : 'Sua tela está sendo compartilhada, mas sem som. No Chrome, marque "Compartilhar áudio da guia" na janelinha de seleção para enviar o som junto.');
+    }
   }
 
   function stopShare() {
     if (!sharing) return;
     sharing = false;
+    sharingAudio = false;
     peers.forEach(applyShareTo);
     if (screenStream) screenStream.getTracks().forEach((t) => t.stop());
     screenStream = null;
@@ -531,6 +669,24 @@
     localStorage.setItem(LS_QUALITY, quality);
     await applyQuality();
     if (sharing) systemMessage(`Qualidade do compartilhamento: ${QUALITY[quality].label}.`);
+  });
+
+  // ── Buffer de reprodução (suavidade) ─────────────────────
+  el.buffer.value = String(bufferMs);
+  el.buffer.addEventListener('change', () => {
+    bufferMs = Number(el.buffer.value);
+    localStorage.setItem(LS_BUFFER, String(bufferMs));
+    peers.forEach(applyBufferTo);
+    systemMessage(bufferMs === 0
+      ? 'Telas exibidas em tempo real (pode engasgar se a internet oscilar).'
+      : `Telas exibidas com ${(bufferMs / 1000).toFixed(1).replace('.', ',')}s de atraso, para ficarem mais suaves.`);
+  });
+
+  // ── Enviar o som junto com a tela ────────────────────────
+  el.shareAudioBox.checked = localStorage.getItem(LS_SHARE_AUDIO) !== 'nao';
+  el.shareAudioBox.addEventListener('change', () => {
+    localStorage.setItem(LS_SHARE_AUDIO, el.shareAudioBox.checked ? 'sim' : 'nao');
+    if (sharing) systemMessage('A mudança vale no próximo compartilhamento — pare e comece de novo para aplicar agora.');
   });
 
   async function applyQuality() {
@@ -589,8 +745,10 @@
   }
 
   // ── Grade de telas ───────────────────────────────────────
-  function addTile(id, label, stream, isLocal = false) {
-    removeTile(id);
+  function addTile(id, label, stream, { isLocal = false, peer = null } = {}) {
+    const existente = el.grid.querySelector(`.tile[data-peer="${CSS.escape(String(id))}"]`);
+    if (existente) return; // já está na tela; nada a refazer
+
     const tile = document.createElement('div');
     tile.className = 'tile';
     tile.dataset.peer = id;
@@ -612,10 +770,65 @@
     hint.textContent = 'clique para focar';
 
     tile.append(video, tag, hint);
+
+    // Volume do som daquela transmissão, só para quem assiste.
+    if (peer) {
+      const box = document.createElement('div');
+      box.className = 'tile-audio';
+      box.hidden = true;
+
+      const botao = document.createElement('button');
+      botao.type = 'button';
+      botao.textContent = '🔊';
+      botao.title = 'Silenciar o som desta transmissão';
+
+      const slider = document.createElement('input');
+      slider.type = 'range';
+      slider.min = '0';
+      slider.max = '100';
+      slider.value = String(Math.round(peer.volume * 100));
+      slider.title = 'Volume desta transmissão';
+
+      const aplicar = () => {
+        if (!peer.screenAudioEl) return;
+        peer.screenAudioEl.volume = peer.volume;
+        peer.screenAudioEl.muted = deafened || peer.screenAudioMuted;
+        botao.textContent = peer.screenAudioMuted || peer.volume === 0 ? '🔇' : '🔊';
+      };
+
+      slider.addEventListener('input', () => {
+        peer.volume = Number(slider.value) / 100;
+        peer.screenAudioMuted = false;
+        aplicar();
+      });
+      botao.addEventListener('click', () => {
+        peer.screenAudioMuted = !peer.screenAudioMuted;
+        aplicar();
+      });
+      // Mexer no volume não deve mudar o que estou assistindo.
+      box.addEventListener('click', (e) => e.stopPropagation());
+
+      box.append(botao, slider);
+      tile.append(box);
+      peer.audioBox = box;
+      peer.aplicarVolume = aplicar;
+    }
+
     tile.addEventListener('click', () => setViewing(viewing === id ? 'todos' : id));
 
     el.grid.appendChild(tile);
     applyView();
+  }
+
+  /** Mostra o controle de volume só quando a transmissão tem som mesmo. */
+  function syncTileAudio(peer) {
+    if (!peer.audioBox) return;
+    const faixa = peer.screenAudioEl && peer.screenAudioEl.srcObject
+      ? peer.screenAudioEl.srcObject.getAudioTracks()[0]
+      : null;
+    const temSom = !!(peer.sharingAudio && faixa && !faixa.muted);
+    peer.audioBox.hidden = !temSom;
+    if (temSom && peer.aplicarVolume) peer.aplicarVolume();
   }
 
   function removeTile(id) {

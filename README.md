@@ -66,6 +66,42 @@ Abra `http://localhost:3000` em duas abas, entre com nomes diferentes e teste. E
 
 ---
 
+## Passo 1.5 — Definir a senha da sala
+
+A senha **não fica no código**. Ela vive numa variável de ambiente, que só você enxerga no painel do Render.
+
+> Um esclarecimento útil: o `.gitignore` sozinho não protege senha nenhuma. Ele só impede que um arquivo seja enviado ao repositório — se a senha estivesse escrita dentro do `server.js`, ela iria junto do mesmo jeito. Por isso a senha entra por fora, como variável de ambiente.
+
+### No Render
+
+1. Abra seu serviço → **Environment** (menu da esquerda)
+2. **Add Environment Variable**
+3. **Key:** `ROOM_PASSWORD` — **Value:** a senha combinada (por exemplo `frunos`)
+4. **Save changes** — o Render reinicia o serviço sozinho
+
+Pronto: a tela de entrada passa a pedir senha. Para trocar a senha depois, basta editar esse valor; para abrir a sala para qualquer um, apague a variável.
+
+### Rodando na sua máquina
+
+```bash
+cd server
+cp .env.example .env      # depois edite o .env e ponha a senha
+npm start
+```
+
+O arquivo `.env` está no `.gitignore` e nunca vai para o GitHub.
+
+### Como a senha é protegida
+
+- É conferida **no servidor**, nunca no navegador — não adianta mexer no código da página.
+- A comparação é de tempo constante, para não vazar pistas pelo tempo de resposta.
+- Cada resposta a uma senha errada demora 0,6s de propósito, e **8 erros travam aquele IP por 10 minutos** — inclusive para a senha certa, para o atacante não descobrir que acertou.
+- Quem erra a senha não é registrado na sala nem recebe a lista de quem está online.
+
+Sendo honesto sobre o alcance disso: é uma senha compartilhada entre amigos, do tipo "tranca na porta". Serve muito bem para evitar estranhos entrando na conversa. Não é um sistema de contas individuais — quem sabe a senha entra com o nome que quiser.
+
+---
+
 ## Passo 2 — Gerar o app desktop
 
 ```bash
@@ -100,14 +136,16 @@ Os instaladores saem em `desktop/dist/`:
 
 ## Como usar
 
-1. Abra o app, digite seu nome e o endereço do servidor, clique em **Entrar na sala**.
+1. Abra o app, digite seu nome, o endereço do servidor e a senha da sala, clique em **Entrar na sala**.
 2. Todo mundo cai no mesmo canal `#geral`. Quem está conectado aparece na barra da esquerda, com o nome iluminado quando fala.
 3. **🎙️ Mudo** — corta seu microfone: os outros param de te ouvir.
 4. **🔈 Ensurdecer** — você para de ouvir todo mundo. Como no Discord, isso também fecha seu microfone (se você não está ouvindo, não faz sentido continuar sendo ouvido sem saber). Ao desfazer, o microfone volta como estava antes.
 5. **🔊 ao lado de cada nome** — silencia **só aquela pessoa**, e só para você. Ninguém mais é afetado e a pessoa não fica sabendo.
 6. **🖥️ Compartilhar tela** — abre um seletor com suas telas e janelas; escolha uma e ela aparece para todos. Clique de novo para parar.
-7. **⚙️ Qualidade** — escolhe como sua tela é enviada. Vale trocar a qualquer momento, inclusive no meio do compartilhamento.
-8. **⏻ Sair** — desconecta e volta para a tela inicial.
+7. **Enviar o som junto** — quando marcado, o som do que está tocando (o jogo, o vídeo) vai junto com a imagem.
+8. **⚙️ Qualidade** — escolhe como **sua** tela é enviada. Vale trocar a qualquer momento, inclusive no meio do compartilhamento.
+9. **⏱️ Atraso** — escolhe quanto **você** segura as telas dos outros antes de exibir, para elas não engasgarem.
+10. **⏻ Sair** — desconecta e volta para a tela inicial.
 
 O chat de texto fica embaixo. As mensagens são **só da sessão**: quando você fecha o app, elas somem (era o combinado — nada é salvo em banco de dados).
 
@@ -127,6 +165,26 @@ Quando duas ou mais pessoas compartilham ao mesmo tempo, aparece uma barra em ci
 
 As telas escondidas ficam pausadas, o que economiza processador. A imagem continua chegando pela rede — para realmente cortar o consumo de banda de quem você não assiste seria preciso renegociar a conexão, o que traz de volta justamente a instabilidade que o projeto evita.
 
+### O som da transmissão
+
+Cada conexão reserva **dois canais de áudio**: um para a sua voz e outro para o som da sua tela. Eles viajam separados de propósito, e é isso que permite, do lado de quem assiste, um controle de volume só para a transmissão — passe o mouse sobre o quadro e aparece um slider no canto. Dá para deixar o jogo baixinho e continuar ouvindo a galera normalmente, ou silenciar o jogo sem silenciar ninguém.
+
+A voz também recebe um tratamento diferente do som do jogo: a voz passa por cancelamento de eco e supressão de ruído, enquanto o som da tela vai cru, sem esses filtros — eles são ótimos para fala e péssimos para música.
+
+**Onde funciona:** no Windows, tanto no app quanto no Chrome. No Chrome você precisa marcar *"Compartilhar áudio da guia"* na janelinha de seleção. No Mac e no Linux o sistema operacional normalmente não deixa capturar o som interno; nesse caso a tela é compartilhada só com imagem e o app avisa por mensagem, sem quebrar nada.
+
+### O atraso (suavidade)
+
+Quando a internet oscila, os pedacinhos de vídeo chegam desencontrados e a tela engasga. Segurar a imagem por meio segundo antes de exibir dá tempo dos pedaços atrasados chegarem, e a reprodução fica lisa.
+
+| Opção | Efeito |
+|---|---|
+| Sem atraso | Você vê o que está acontecendo agora, mas pode travar quando a rede oscila |
+| 0,5s (padrão) | Absorve os engasgos comuns sem atrapalhar a conversa |
+| 1,5s | Bem suave, para internet ruim de verdade |
+
+Duas coisas importantes: a escolha é **sua e só sua** — você define como quer ver os outros, sem afetar ninguém. E **a voz nunca é atrasada**, só a tela e o som dela. Conversa precisa ser em tempo real; por isso, com 1,5s de atraso, você vai ouvir alguém comentar uma jogada um instante antes de vê-la.
+
 ---
 
 ## Detalhes que vale saber
@@ -135,7 +193,7 @@ As telas escondidas ficam pausadas, o que economiza processador. A imagem contin
 
 **Se a voz não conectar para alguém.** Algumas redes (universidade, empresa, alguns provedores com CGNAT) bloqueiam conexão direta. O app já vem com um servidor TURN público de cortesia (Open Relay) que resolve a maioria desses casos, mas ele é compartilhado com o mundo inteiro e pode ficar lento. Se isso incomodar, crie uma conta grátis em [metered.ca](https://www.metered.ca/tools/openrelay/) ou suba um `coturn`, e troque a lista `ICE_SERVERS` no topo de `server/public/app.js`.
 
-**Áudio da tela.** Hoje o compartilhamento envia só imagem, não o som do que está tocando. Dá para adicionar (`audio: true` no `getDisplayMedia`, e `audio: 'loopback'` no handler do Electron), mas o comportamento varia bastante entre Windows, Mac e Linux — por isso ficou de fora da versão básica.
+**Consumo do servidor.** O plano grátis do Render dá 512 MB de RAM e 0,1 CPU. Este servidor usa cerca de **70 MB** parado e cresce pouquíssimo com gente na sala: ele só guarda nome e id de quem está online e repassa textinhos de sinalização. Voz e vídeo nem passam por ele. Os limites que realmente importam são a hibernação após 15 minutos e as 750 horas por mês — memória não é preocupação aqui.
 
 **Editando a interface.** Mexa sempre em `server/public/`. O `npm start` e o `npm run dist` do desktop copiam essa pasta para `desktop/renderer/` automaticamente — não edite `desktop/renderer/` direto, porque ela é sobrescrita.
 
@@ -159,7 +217,10 @@ Verificado com clientes reais (Chromium automatizado) rodando ao mesmo tempo, e 
 - **ensurdecer** silencia todos os áudios e fecha o microfone, e desfazer restaura o estado anterior;
 - **silenciar uma pessoa** afeta só ela e só para quem clicou (verificado nas outras sessões);
 - **qualidade** aplicada de verdade no envio (bitrate e fps conferidos no `getStats`), com troca ao vivo sem derrubar a conexão e sem perder frames;
-- **seleção de tela**: abas aparecem só com duas ou mais, foco esconde e pausa as outras, e a visão volta sozinha para "Todas" quando quem você assistia para de compartilhar.
+- **seleção de tela**: abas aparecem só com duas ou mais, foco esconde e pausa as outras, e a visão volta sozinha para "Todas" quando quem você assistia para de compartilhar;
+- **senha**: senha errada é recusada, não entra na sala e nem sequer é registrada no servidor; 8 erros travam o IP por 10 minutos, e durante o castigo nem a senha certa passa;
+- **som da transmissão**: a conexão carrega mesmo 2 canais de áudio + 1 de vídeo, os dois áudios chegam simultaneamente, tocam em players separados, e o slider do quadro mexe só no som da transmissão — a voz continua intacta;
+- **atraso**: 0,5s aplicado na tela e no som dela, com a voz ficando em 0; trocar para 1,5s ou 0 reconfigura os receptores na hora.
 
 Durante esses testes apareceram dois problemas reais, que estão corrigidos no código:
 

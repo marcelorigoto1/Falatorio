@@ -44,13 +44,17 @@ app.whenReady().then(() => {
 
   // navigator.mediaDevices.getDisplayMedia() cai aqui. Usamos a fonte que o
   // usuário escolheu no seletor da interface.
-  session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
+  session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
     try {
       const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
       const source = sources.find((s) => s.id === pendingSourceId) || sources[0];
       pendingSourceId = null;
       if (!source) return callback({});
-      callback({ video: source });
+
+      // Som do que está tocando ("loopback"): o Chromium só sabe capturar no
+      // Windows. Nos outros sistemas vai só a imagem, e a interface avisa.
+      const querSom = request.audioRequested && process.platform === 'win32';
+      callback(querSom ? { video: source, audio: 'loopback' } : { video: source });
     } catch (err) {
       console.error('display media', err);
       callback({});
