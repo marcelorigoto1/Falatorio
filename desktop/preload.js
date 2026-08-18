@@ -6,5 +6,5 @@ contextBridge.exposeInMainWorld('falatorio', {
   isDesktop: true,
   defaultServer: process.env.FALATORIO_SERVER || '',
   getSources: () => ipcRenderer.invoke('falatorio:get-sources'),
-  chooseSource: (id) => ipcRenderer.invoke('falatorio:choose-source', id),
+  chooseSource: (id, comSom) => ipcRenderer.invoke('falatorio:choose-source', id, !!comSom),
 });

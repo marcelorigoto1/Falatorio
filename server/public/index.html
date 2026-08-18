@@ -59,9 +59,10 @@
         <span class="ctl-icon">🖥️</span><span id="share-label">Compartilhar tela</span>
       </button>
 
-      <label class="ctl ctl-check" for="share-audio" title="Envia o som do jogo/vídeo junto com a imagem">
-        <input type="checkbox" id="share-audio" checked />
-        <span>Enviar o som junto</span>
+      <label class="ctl ctl-field" for="output-select" id="output-row" hidden
+             title="Onde você quer ouvir as vozes e os sons da chamada">
+        <span class="ctl-icon">🎧</span>
+        <select id="output-select"></select>
       </label>
 
       <label class="ctl ctl-field" for="quality-select" title="Qualidade da SUA tela compartilhada">
@@ -113,12 +114,35 @@
   <div id="audio-sink" class="audio-sink"></div>
 </div>
 
-<!-- ── Seletor de tela (só no app desktop) ───────────────────── -->
+<!-- ── Diálogo de compartilhamento ───────────────────────────── -->
 <div id="picker" class="picker" hidden>
   <div class="picker-card">
-    <h2>O que você quer compartilhar?</h2>
+    <h2 id="picker-title">O que você quer compartilhar?</h2>
     <div id="picker-list" class="picker-list"></div>
-    <button id="picker-cancel" type="button" class="ctl">Cancelar</button>
+
+    <fieldset class="picker-sound">
+      <legend>E o som?</legend>
+      <label class="sound-opt">
+        <input type="radio" name="share-sound" value="nenhum" />
+        <span>
+          <strong>Sem som</strong>
+          <em>Só a imagem. Sua voz continua indo normalmente.</em>
+        </span>
+      </label>
+      <label class="sound-opt">
+        <input type="radio" name="share-sound" value="sistema" />
+        <span>
+          <strong>Som do computador</strong>
+          <em id="sound-note">Envia o que está tocando na máquina.</em>
+        </span>
+      </label>
+      <p class="picker-warn" id="picker-warn" hidden></p>
+    </fieldset>
+
+    <div class="picker-actions">
+      <button id="picker-cancel" type="button" class="ctl">Cancelar</button>
+      <button id="picker-ok" type="button" class="ctl primary">Compartilhar</button>
+    </div>
   </div>
 </div>
 

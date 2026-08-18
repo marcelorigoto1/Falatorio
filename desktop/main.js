@@ -5,8 +5,9 @@ const { app, BrowserWindow, session, desktopCapturer, ipcMain, shell } = require
 // Defina em tempo de build (FALATORIO_SERVER) ou deixe o usuário digitar.
 const DEFAULT_SERVER = process.env.FALATORIO_SERVER || '';
 
-/** Fonte escolhida no seletor do renderer, consumida pelo getDisplayMedia. */
+/** Escolhas feitas no diálogo da interface, consumidas pelo getDisplayMedia. */
 let pendingSourceId = null;
+let pendingWithAudio = false;
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -48,13 +49,16 @@ app.whenReady().then(() => {
     try {
       const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
       const source = sources.find((s) => s.id === pendingSourceId) || sources[0];
+      const querSom = pendingWithAudio;
       pendingSourceId = null;
+      pendingWithAudio = false;
       if (!source) return callback({});
 
-      // Som do que está tocando ("loopback"): o Chromium só sabe capturar no
-      // Windows. Nos outros sistemas vai só a imagem, e a interface avisa.
-      const querSom = request.audioRequested && process.platform === 'win32';
-      callback(querSom ? { video: source, audio: 'loopback' } : { video: source });
+      // Som do que está tocando ("loopback"): é a mistura final da saída de
+      // áudio, e o Chromium só sabe capturar isso no Windows. Não existe
+      // captura por aplicativo — por isso a interface explica o que vai junto.
+      const podeSom = querSom && request.audioRequested !== false && process.platform === 'win32';
+      callback(podeSom ? { video: source, audio: 'loopback' } : { video: source });
     } catch (err) {
       console.error('display media', err);
       callback({});
@@ -74,8 +78,9 @@ app.whenReady().then(() => {
     }));
   });
 
-  ipcMain.handle('falatorio:choose-source', (_ev, id) => {
+  ipcMain.handle('falatorio:choose-source', (_ev, id, comSom) => {
     pendingSourceId = id;
+    pendingWithAudio = !!comSom;
     return true;
   });
 

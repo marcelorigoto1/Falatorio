@@ -34,7 +34,8 @@
   const LS_SERVER = 'falatorio.server';
   const LS_QUALITY = 'falatorio.quality';
   const LS_BUFFER = 'falatorio.buffer';
-  const LS_SHARE_AUDIO = 'falatorio.shareAudio';
+  const LS_SOM = 'falatorio.som';
+  const LS_SAIDA = 'falatorio.saida';
 
   // ── Elementos ────────────────────────────────────────────
   const $ = (id) => document.getElementById(id);
@@ -49,11 +50,13 @@
     deafBtn: $('deaf-btn'), deafIcon: $('deaf-icon'), deafLabel: $('deaf-label'),
     shareBtn: $('share-btn'), shareLabel: $('share-label'), leaveBtn: $('leave-btn'),
     quality: $('quality-select'), buffer: $('buffer-select'),
-    shareAudioBox: $('share-audio'), viewBar: $('view-bar'),
+    outputRow: $('output-row'), output: $('output-select'), viewBar: $('view-bar'),
     grid: $('grid'), stageEmpty: $('stage-empty'),
     messages: $('messages'), chatForm: $('chat-form'), chatInput: $('chat-input'),
     audioSink: $('audio-sink'),
     picker: $('picker'), pickerList: $('picker-list'), pickerCancel: $('picker-cancel'),
+    pickerOk: $('picker-ok'), pickerTitle: $('picker-title'), pickerWarn: $('picker-warn'),
+    soundNote: $('sound-note'),
   };
 
   // ── Estado ───────────────────────────────────────────────
@@ -206,6 +209,7 @@
     el.app.hidden = false;
     el.connDot.classList.add('on');
     renderPeers();
+    listarSaidas().catch(() => {});
     systemMessage(`Você entrou como ${name}.`);
     el.chatInput.focus();
   }
@@ -242,6 +246,9 @@
       if (!peer) return;
       peer.muted = p.muted;
       peer.deafened = p.deafened;
+      // Quem parou de compartilhar zera o "fechei essa": a próxima
+      // transmissão dela começa aberta de novo.
+      if (peer.sharing && !p.sharing) peer.fechada = false;
       peer.sharing = p.sharing;
       peer.sharingAudio = p.sharingAudio;
       syncTile(peer);
@@ -354,8 +361,11 @@
         // A faixa de vídeo chega logo na conexão e fica em silêncio até a
         // pessoa compartilhar; o quadro só aparece quando ela compartilha.
         peer.videoStream = stream;
+        // Os eventos de mute/unmute da faixa só pedem uma reavaliação: quem
+        // manda é o estado anunciado pela pessoa. Um "mute" atrasado do
+        // compartilhamento anterior não pode derrubar o quadro do novo.
         track.addEventListener('unmute', () => syncTile(peer));
-        track.addEventListener('mute', () => removeTile(info.id));
+        track.addEventListener('mute', () => syncTile(peer));
         syncTile(peer);
         return;
       }
@@ -371,6 +381,7 @@
           peer.audioEl = document.createElement('audio');
           peer.audioEl.autoplay = true;
           el.audioSink.appendChild(peer.audioEl);
+          rotearPlayer(peer.audioEl);
         }
         peer.audioEl.srcObject = stream;
         peer.audioEl.muted = deafened || !!peer.silenciado;
@@ -381,6 +392,7 @@
           peer.screenAudioEl = document.createElement('audio');
           peer.screenAudioEl.autoplay = true;
           el.audioSink.appendChild(peer.screenAudioEl);
+          rotearPlayer(peer.screenAudioEl);
         }
         peer.screenAudioEl.srcObject = stream;
         peer.screenAudioEl.volume = peer.volume;
@@ -450,7 +462,7 @@
 
   /** Mostra ou esconde o quadro da tela de um participante. */
   function syncTile(peer) {
-    if (peer.sharing && peer.videoStream) {
+    if (peer.sharing && peer.videoStream && !peer.fechada) {
       addTile(peer.id, peer.name, peer.videoStream, { peer });
       syncTileAudio(peer);
     } else {
@@ -585,15 +597,16 @@
   el.shareBtn.addEventListener('click', () => (sharing ? stopShare() : startShare()));
 
   async function startShare() {
+    // A escolha do som acontece aqui, junto com a escolha da tela.
+    const escolha = await abrirDialogo();
+    if (!escolha) return;
+    localStorage.setItem(LS_SOM, escolha.som);
+    const querSom = escolha.som === 'sistema';
+
     try {
-      if (desktop) {
-        const sources = await desktop.getSources();
-        const chosen = await pickSource(sources);
-        if (!chosen) return;
-        await desktop.chooseSource(chosen);
-      }
+      if (desktop) await desktop.chooseSource(escolha.fonte, querSom);
+
       const q = QUALITY[quality];
-      const querSom = el.shareAudioBox.checked;
       const video = {
         width: { ideal: q.width, max: q.width },
         height: { ideal: q.height, max: q.height },
@@ -603,9 +616,11 @@
       const audio = querSom
         ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
         : false;
+      // Dica ao navegador: sem "sistema" na lista quando não queremos som.
+      const systemAudio = querSom ? 'include' : 'exclude';
 
       try {
-        screenStream = await navigator.mediaDevices.getDisplayMedia({ video, audio });
+        screenStream = await navigator.mediaDevices.getDisplayMedia({ video, audio, systemAudio });
       } catch (err) {
         // Alguns sistemas recusam a captura quando pedimos som junto.
         if (querSom && err.name !== 'NotAllowedError') {
@@ -627,6 +642,7 @@
     if (somDaTela) somDaTela.addEventListener('ended', () => { sharingAudio = false; sendState(); });
 
     sharing = true;
+    previaFechada = false;
     // Sem renegociar: as faixas entram nos espaços já negociados.
     peers.forEach(applyShareTo);
     await applyQuality();
@@ -637,10 +653,12 @@
     sendState();
     renderPeers();
 
-    if (el.shareAudioBox.checked && !somDaTela) {
+    if (querSom && !somDaTela) {
       systemMessage(desktop
-        ? 'Sua tela está sendo compartilhada, mas sem som — o sistema não liberou a captura de áudio (isso é comum fora do Windows).'
-        : 'Sua tela está sendo compartilhada, mas sem som. No Chrome, marque "Compartilhar áudio da guia" na janelinha de seleção para enviar o som junto.');
+        ? 'Sua tela está sendo compartilhada, mas sem som — o sistema não liberou a captura de áudio (fora do Windows isso é o normal).'
+        : 'Sua tela está sendo compartilhada, mas sem som. No Chrome, é preciso marcar "Compartilhar áudio" na janelinha de seleção — e isso só aparece para telas inteiras e guias, não para janelas soltas.');
+    } else if (querSom && somDaTela) {
+      systemMessage('Compartilhando com o som do computador. Lembre: sai a mistura inteira da máquina, inclusive as vozes da chamada.');
     }
   }
 
@@ -671,6 +689,53 @@
     if (sharing) systemMessage(`Qualidade do compartilhamento: ${QUALITY[quality].label}.`);
   });
 
+  // ── Onde ouvir a chamada ─────────────────────────────────
+  //
+  // Existe um motivo prático forte para isso: o "som do computador" que a
+  // captura envia é a mistura final da saída padrão. Se as vozes da chamada
+  // saírem por OUTRO aparelho (um fone, por exemplo), elas ficam de fora da
+  // captura — e a transmissão leva só o som do jogo, sem eco.
+  async function listarSaidas() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+    const els = document.createElement('audio');
+    if (typeof els.setSinkId !== 'function') return; // navegador sem suporte
+
+    const dispositivos = (await navigator.mediaDevices.enumerateDevices())
+      .filter((d) => d.kind === 'audiooutput');
+    if (dispositivos.length < 2) { el.outputRow.hidden = true; return; }
+
+    const salvo = localStorage.getItem(LS_SAIDA) || 'default';
+    el.output.innerHTML = '';
+    dispositivos.forEach((d, i) => {
+      const opt = document.createElement('option');
+      opt.value = d.deviceId;
+      opt.textContent = d.label || `Saída ${i + 1}`;
+      el.output.appendChild(opt);
+    });
+    el.output.value = [...el.output.options].some((o) => o.value === salvo) ? salvo : 'default';
+    el.outputRow.hidden = false;
+    aplicarSaida();
+  }
+
+  async function aplicarSaida() {
+    const id = el.output.value;
+    localStorage.setItem(LS_SAIDA, id);
+    const players = [...el.audioSink.querySelectorAll('audio')];
+    await Promise.all(players.map((p) => (p.setSinkId ? p.setSinkId(id).catch(() => {}) : null)));
+  }
+
+  el.output.addEventListener('change', async () => {
+    await aplicarSaida();
+    const nome = el.output.options[el.output.selectedIndex].textContent;
+    systemMessage(`Você passou a ouvir a chamada em: ${nome}.`);
+  });
+
+  /** Todo player novo já nasce apontando para a saída escolhida. */
+  function rotearPlayer(player) {
+    const id = localStorage.getItem(LS_SAIDA);
+    if (id && player.setSinkId) player.setSinkId(id).catch(() => {});
+  }
+
   // ── Buffer de reprodução (suavidade) ─────────────────────
   el.buffer.value = String(bufferMs);
   el.buffer.addEventListener('change', () => {
@@ -680,13 +745,6 @@
     systemMessage(bufferMs === 0
       ? 'Telas exibidas em tempo real (pode engasgar se a internet oscilar).'
       : `Telas exibidas com ${(bufferMs / 1000).toFixed(1).replace('.', ',')}s de atraso, para ficarem mais suaves.`);
-  });
-
-  // ── Enviar o som junto com a tela ────────────────────────
-  el.shareAudioBox.checked = localStorage.getItem(LS_SHARE_AUDIO) !== 'nao';
-  el.shareAudioBox.addEventListener('change', () => {
-    localStorage.setItem(LS_SHARE_AUDIO, el.shareAudioBox.checked ? 'sim' : 'nao');
-    if (sharing) systemMessage('A mudança vale no próximo compartilhamento — pare e comece de novo para aplicar agora.');
   });
 
   async function applyQuality() {
@@ -721,26 +779,77 @@
     });
   }
 
-  // Seletor de janela/tela do Electron
-  function pickSource(sources) {
-    return new Promise((resolve) => {
-      el.pickerList.innerHTML = '';
-      sources.forEach((s) => {
+  /**
+   * Diálogo único de compartilhamento: escolhe a tela (no app) e o som.
+   * Resolve com { fonte, som } ou null se a pessoa desistir.
+   */
+  async function abrirDialogo() {
+    let fonte = null;
+
+    el.pickerList.innerHTML = '';
+    if (desktop) {
+      el.pickerTitle.textContent = 'O que você quer compartilhar?';
+      const fontes = await desktop.getSources();
+      fontes.forEach((s, i) => {
         const btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = 'picker-item';
+        btn.className = 'picker-item' + (i === 0 ? ' on' : '');
         btn.innerHTML = `<img src="${s.thumbnail}" alt="" /><span>${escapeHtml(s.name)}</span>`;
-        btn.addEventListener('click', () => { close(s.id); });
+        btn.addEventListener('click', () => {
+          fonte = s.id;
+          [...el.pickerList.children].forEach((c) => c.classList.toggle('on', c === btn));
+        });
         el.pickerList.appendChild(btn);
       });
-      const close = (value) => {
+      fonte = fontes.length ? fontes[0].id : null;
+      el.pickerList.hidden = false;
+    } else {
+      el.pickerTitle.textContent = 'Compartilhar tela';
+      el.pickerList.hidden = true;
+    }
+
+    // Textos honestos sobre o que cada sistema consegue capturar.
+    const win = /win/i.test(navigator.platform) || /Windows/i.test(navigator.userAgent);
+    el.soundNote.textContent = desktop
+      ? (win ? 'Sai a mistura da máquina inteira.' : 'Só funciona no Windows; aqui deve vir sem som.')
+      : 'O Chrome pergunta na janelinha dele; funciona para tela inteira e guias.';
+
+    el.pickerWarn.textContent = 'O computador não sabe separar o som de um programa só: o que vai é a mistura inteira da saída de áudio — inclusive as vozes desta chamada, que voltam como eco para os outros. Para mandar só o som do jogo, escolha na barra lateral ouvir a chamada em outro aparelho (um fone), deixando o jogo na saída principal.';
+
+    const radios = [...document.querySelectorAll('input[name="share-sound"]')];
+    const salvo = localStorage.getItem(LS_SOM) || 'nenhum';
+    radios.forEach((r) => { r.checked = r.value === salvo; });
+
+    const atualizarAviso = () => {
+      const escolhido = radios.find((r) => r.checked);
+      el.pickerWarn.hidden = !escolhido || escolhido.value !== 'sistema';
+    };
+    radios.forEach((r) => r.addEventListener('change', atualizarAviso));
+    atualizarAviso();
+
+    return new Promise((resolve) => {
+      const fechar = (valor) => {
         el.picker.hidden = true;
-        el.pickerCancel.removeEventListener('click', onCancel);
-        resolve(value);
+        el.pickerOk.removeEventListener('click', ok);
+        el.pickerCancel.removeEventListener('click', cancelar);
+        document.removeEventListener('keydown', tecla);
+        resolve(valor);
       };
-      const onCancel = () => close(null);
-      el.pickerCancel.addEventListener('click', onCancel);
+      const ok = () => {
+        const escolhido = radios.find((r) => r.checked);
+        fechar({ fonte, som: escolhido ? escolhido.value : 'nenhum' });
+      };
+      const cancelar = () => fechar(null);
+      const tecla = (e) => {
+        if (e.key === 'Escape') cancelar();
+        if (e.key === 'Enter') { e.preventDefault(); ok(); }
+      };
+
+      el.pickerOk.addEventListener('click', ok);
+      el.pickerCancel.addEventListener('click', cancelar);
+      document.addEventListener('keydown', tecla);
       el.picker.hidden = false;
+      el.pickerOk.focus();
     });
   }
 
@@ -767,9 +876,28 @@
 
     const hint = document.createElement('div');
     hint.className = 'tile-hint';
-    hint.textContent = 'clique para focar';
+    hint.textContent = 'clique para focar · 2 cliques = tela cheia';
 
-    tile.append(video, tag, hint);
+    // Ferramentas do quadro: tela cheia e fechar
+    const tools = document.createElement('div');
+    tools.className = 'tile-tools';
+
+    const btnFull = document.createElement('button');
+    btnFull.type = 'button';
+    btnFull.textContent = '⛶';
+    btnFull.title = 'Tela cheia (ou dê dois cliques no quadro)';
+    btnFull.addEventListener('click', (e) => { e.stopPropagation(); alternarTelaCheia(tile); });
+
+    const btnFechar = document.createElement('button');
+    btnFechar.type = 'button';
+    btnFechar.className = 'close';
+    btnFechar.textContent = '✕';
+    btnFechar.title = isLocal ? 'Esconder a sua prévia' : 'Sair desta transmissão (parar de assistir)';
+    btnFechar.addEventListener('click', (e) => { e.stopPropagation(); fecharTransmissao(id); });
+
+    tools.append(btnFull, btnFechar);
+    tile.append(video, tag, hint, tools);
+    tile.addEventListener('dblclick', () => alternarTelaCheia(tile));
 
     // Volume do som daquela transmissão, só para quem assiste.
     if (peer) {
@@ -838,6 +966,82 @@
     applyView();
   }
 
+  // ── Tela cheia ───────────────────────────────────────────
+  function alternarTelaCheia(tile) {
+    if (document.fullscreenElement === tile) {
+      document.exitFullscreen().catch(() => {});
+      return;
+    }
+    const pedir = tile.requestFullscreen || tile.webkitRequestFullscreen;
+    if (!pedir) { systemMessage('Este navegador não permite tela cheia.'); return; }
+    // Em tela cheia o quadro precisa estar tocando, mesmo se estava pausado.
+    const video = tile.querySelector('video');
+    if (video) video.play().catch(() => {});
+    pedir.call(tile).catch((err) => systemMessage(`Não deu para abrir em tela cheia: ${err.message}`));
+  }
+
+  // O navegador já sai da tela cheia no Esc, mas garantimos aqui também —
+  // dentro do app Electron nem sempre esse atalho chega.
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    }
+  });
+
+  // F abre/fecha a tela cheia do quadro em foco (ou do único que existe).
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'f' && e.key !== 'F') return;
+    if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) return;
+    if (!el.app || el.app.hidden) return;
+    const visiveis = [...el.grid.querySelectorAll('.tile')].filter((t) => !t.hidden);
+    const alvo = document.fullscreenElement || visiveis[0];
+    if (alvo) { e.preventDefault(); alternarTelaCheia(alvo); }
+  });
+
+  // ── Sair de uma transmissão (parar de assistir) ──────────
+  let previaFechada = false;
+
+  function fecharTransmissao(id) {
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+
+    if (id === myId) {
+      previaFechada = true;
+      removeTile(myId);
+      systemMessage('Prévia escondida. Você continua compartilhando para os outros.');
+      return;
+    }
+    const peer = peers.get(id);
+    if (!peer) return;
+    peer.fechada = true;
+    if (peer.screenAudioEl) peer.screenAudioEl.muted = true;
+    removeTile(id);
+    systemMessage(`Você saiu da transmissão de ${peer.name}. Para voltar, use a barra "Assistindo".`);
+  }
+
+  function reabrirTransmissao(id) {
+    if (id === myId) {
+      previaFechada = false;
+      if (sharing && screenStream) addTile(myId, `${myName} (você)`, screenStream, { isLocal: true });
+      return;
+    }
+    const peer = peers.get(id);
+    if (!peer) return;
+    peer.fechada = false;
+    if (peer.screenAudioEl) peer.screenAudioEl.muted = deafened || peer.screenAudioMuted;
+    syncTile(peer);
+    // Voltar a assistir não deve esconder as outras: mostramos todas de novo.
+    setViewing('todos');
+  }
+
+  /** Quem está compartilhando mas está fechado por mim. */
+  const fechadas = () => {
+    const lista = [...peers.values()]
+      .filter((p) => p.sharing && p.fechada)
+      .map((p) => ({ id: p.id, nome: p.name }));
+    if (sharing && previaFechada) lista.unshift({ id: myId, nome: `${myName} (você)` });
+    return lista;
+  };
+
   // ── Escolher qual tela assistir ──────────────────────────
   function setViewing(target) {
     viewing = target;
@@ -863,10 +1067,13 @@
     });
 
     el.grid.classList.toggle('focus-mode', viewing !== 'todos');
-    el.stageEmpty.hidden = tiles.length > 0;
 
-    // Abas: só fazem sentido com duas ou mais telas.
-    if (tiles.length < 2) {
+    const semAssistir = fechadas();
+    el.stageEmpty.hidden = tiles.length > 0 || semAssistir.length > 0;
+
+    // A barra aparece quando há escolha a fazer: duas ou mais telas, ou
+    // alguma transmissão que você fechou e pode reabrir.
+    if (tiles.length < 2 && semAssistir.length === 0) {
       el.viewBar.hidden = true;
       el.viewBar.innerHTML = '';
       return;
@@ -874,17 +1081,26 @@
 
     el.viewBar.hidden = false;
     el.viewBar.innerHTML = '<span class="view-label">Assistindo</span>';
-    const abas = [{ id: 'todos', nome: `Todas (${tiles.length})` }]
-      .concat(tiles.map((t) => ({ id: t.dataset.peer, nome: peerName(t.dataset.peer) })));
 
-    abas.forEach(({ id, nome }) => {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'view-tab' + (viewing === id ? ' on' : '');
-      btn.textContent = nome;
-      btn.addEventListener('click', () => setViewing(id));
-      el.viewBar.appendChild(btn);
+    if (tiles.length >= 2) {
+      el.viewBar.appendChild(criarAba('todos', `Todas (${tiles.length})`, false));
+    }
+    tiles.forEach((t) => {
+      el.viewBar.appendChild(criarAba(t.dataset.peer, peerName(t.dataset.peer), false));
     });
+    semAssistir.forEach(({ id, nome }) => {
+      el.viewBar.appendChild(criarAba(id, nome, true));
+    });
+  }
+
+  function criarAba(id, nome, fechada) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'view-tab' + (viewing === id && !fechada ? ' on' : '') + (fechada ? ' fechada' : '');
+    btn.textContent = nome;
+    btn.title = fechada ? 'Você saiu desta transmissão — clique para voltar a assistir' : '';
+    btn.addEventListener('click', () => (fechada ? reabrirTransmissao(id) : setViewing(id)));
+    return btn;
   }
 
   // ── Chat ─────────────────────────────────────────────────

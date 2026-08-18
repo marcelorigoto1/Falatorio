@@ -141,11 +141,13 @@ Os instaladores saem em `desktop/dist/`:
 3. **🎙️ Mudo** — corta seu microfone: os outros param de te ouvir.
 4. **🔈 Ensurdecer** — você para de ouvir todo mundo. Como no Discord, isso também fecha seu microfone (se você não está ouvindo, não faz sentido continuar sendo ouvido sem saber). Ao desfazer, o microfone volta como estava antes.
 5. **🔊 ao lado de cada nome** — silencia **só aquela pessoa**, e só para você. Ninguém mais é afetado e a pessoa não fica sabendo.
-6. **🖥️ Compartilhar tela** — abre um seletor com suas telas e janelas; escolha uma e ela aparece para todos. Clique de novo para parar.
-7. **Enviar o som junto** — quando marcado, o som do que está tocando (o jogo, o vídeo) vai junto com a imagem.
+6. **🖥️ Compartilhar tela** — abre um diálogo para escolher a tela ou janela **e se vai com som**. Clique de novo para parar.
+7. **🎧 Ouvir a chamada em** — escolhe por qual aparelho você ouve as vozes. Aparece quando há mais de uma saída de áudio, e é a chave para transmitir só o som do jogo (explicado abaixo).
 8. **⚙️ Qualidade** — escolhe como **sua** tela é enviada. Vale trocar a qualquer momento, inclusive no meio do compartilhamento.
 9. **⏱️ Atraso** — escolhe quanto **você** segura as telas dos outros antes de exibir, para elas não engasgarem.
 10. **⏻ Sair** — desconecta e volta para a tela inicial.
+
+Nos quadros das transmissões: **⛶** abre em tela cheia, **✕** sai daquela transmissão, e o slider do canto controla o volume do som dela.
 
 O chat de texto fica embaixo. As mensagens são **só da sessão**: quando você fecha o app, elas somem (era o combinado — nada é salvo em banco de dados).
 
@@ -161,17 +163,39 @@ Lembre que a conexão é em malha: **a banda é multiplicada pelo número de pes
 
 ### Escolhendo qual tela assistir
 
-Quando duas ou mais pessoas compartilham ao mesmo tempo, aparece uma barra em cima com **Todas** e o nome de cada uma. Clique num nome para ver só aquela tela, em tamanho cheio; clique em **Todas** para voltar à grade. Clicar direto no quadro faz a mesma coisa.
+Quando duas ou mais pessoas compartilham ao mesmo tempo, aparece uma barra em cima com **Todas** e o nome de cada uma. Clique num nome para ver só aquela tela; clique em **Todas** para voltar à grade. Clicar direto no quadro faz a mesma coisa.
 
 As telas escondidas ficam pausadas, o que economiza processador. A imagem continua chegando pela rede — para realmente cortar o consumo de banda de quem você não assiste seria preciso renegociar a conexão, o que traz de volta justamente a instabilidade que o projeto evita.
 
+**Tela cheia:** o botão ⛶ no canto do quadro, dois cliques no quadro, ou a tecla **F**. Sai com **Esc**.
+
+**Sair de uma transmissão:** o botão ✕ no canto do quadro. Aquela tela some e o som dela é cortado — você continua na sala, conversando normalmente, só não assiste mais. Para voltar, clique no nome dela (que fica riscado) na barra **Assistindo**. Se a pessoa parar de transmitir e começar de novo, a transmissão nova já vem aberta.
+
+No seu próprio quadro, o ✕ apenas esconde a sua prévia; você continua compartilhando para os outros.
+
 ### O som da transmissão
 
-Cada conexão reserva **dois canais de áudio**: um para a sua voz e outro para o som da sua tela. Eles viajam separados de propósito, e é isso que permite, do lado de quem assiste, um controle de volume só para a transmissão — passe o mouse sobre o quadro e aparece um slider no canto. Dá para deixar o jogo baixinho e continuar ouvindo a galera normalmente, ou silenciar o jogo sem silenciar ninguém.
+A escolha acontece **na hora de transmitir**: ao clicar em *Compartilhar tela* abre um diálogo onde você escolhe a janela (no app) e decide entre **Sem som** e **Som do computador**. O padrão é sem som — nada vai junto sem você pedir. A última escolha fica lembrada.
 
-A voz também recebe um tratamento diferente do som do jogo: a voz passa por cancelamento de eco e supressão de ruído, enquanto o som da tela vai cru, sem esses filtros — eles são ótimos para fala e péssimos para música.
+Cada conexão reserva **dois canais de áudio**: um para a sua voz e outro para o som da sua tela. Eles viajam separados de propósito, e é isso que permite, do lado de quem assiste, um controle de volume só para a transmissão — passe o mouse sobre o quadro e aparece um slider no canto. Dá para deixar o jogo baixinho e continuar ouvindo a galera, ou silenciar o jogo sem silenciar ninguém.
 
-**Onde funciona:** no Windows, tanto no app quanto no Chrome. No Chrome você precisa marcar *"Compartilhar áudio da guia"* na janelinha de seleção. No Mac e no Linux o sistema operacional normalmente não deixa capturar o som interno; nesse caso a tela é compartilhada só com imagem e o app avisa por mensagem, sem quebrar nada.
+A voz também recebe tratamento diferente do som do jogo: a voz passa por cancelamento de eco e supressão de ruído, enquanto o som da tela vai cru, sem esses filtros — eles são ótimos para fala e péssimos para música.
+
+**Onde funciona:** no Windows, tanto no app quanto no Chrome. No Chrome é preciso marcar *"Compartilhar áudio"* na janelinha dele, e isso só aparece para telas inteiras e guias — janelas soltas não têm essa opção. No Mac e no Linux o sistema normalmente não deixa capturar o som interno; nesse caso vai só a imagem e o app avisa por mensagem, sem quebrar nada.
+
+### Por que sai o som do computador inteiro (e como mandar só o do jogo)
+
+Esta é uma limitação real do Chromium, não uma escolha do projeto: **não existe captura de áudio por aplicativo**. O que o navegador entrega é a *mistura final da sua saída de áudio* — o jogo, o navegador, as notificações e, pior, as vozes da própria chamada, que voltam como eco para quem está falando.
+
+O jeito que funciona de verdade é separar as saídas de áudio:
+
+1. Deixe o **jogo tocando na saída principal** (as caixas de som, por exemplo).
+2. Na barra lateral, em **🎧**, escolha ouvir a chamada **em outro aparelho** (um fone USB, um headset Bluetooth).
+3. Compartilhe com **Som do computador**.
+
+Como a captura pega a mistura da saída principal e as vozes agora saem por outro aparelho, o que vai para os amigos é só o som do jogo. Esse seletor só aparece quando o sistema tem mais de uma saída disponível.
+
+Se você tem só uma saída de áudio, as opções honestas são: transmitir **sem som**, ou aceitar que vai a mistura toda (e nesse caso vale todo mundo silenciar sua transmissão pelo slider do quadro quando o eco incomodar). A alternativa avançada é instalar um cabo de áudio virtual e mandar só o jogo para ele — mas aí já é configuração de sistema, fora do que o app controla.
 
 ### O atraso (suavidade)
 
@@ -220,7 +244,12 @@ Verificado com clientes reais (Chromium automatizado) rodando ao mesmo tempo, e 
 - **seleção de tela**: abas aparecem só com duas ou mais, foco esconde e pausa as outras, e a visão volta sozinha para "Todas" quando quem você assistia para de compartilhar;
 - **senha**: senha errada é recusada, não entra na sala e nem sequer é registrada no servidor; 8 erros travam o IP por 10 minutos, e durante o castigo nem a senha certa passa;
 - **som da transmissão**: a conexão carrega mesmo 2 canais de áudio + 1 de vídeo, os dois áudios chegam simultaneamente, tocam em players separados, e o slider do quadro mexe só no som da transmissão — a voz continua intacta;
-- **atraso**: 0,5s aplicado na tela e no som dela, com a voz ficando em 0; trocar para 1,5s ou 0 reconfigura os receptores na hora.
+- **atraso**: 0,5s aplicado na tela e no som dela, com a voz ficando em 0; trocar para 1,5s ou 0 reconfigura os receptores na hora;
+- **diálogo de compartilhamento**: começa em "sem som", mostra o aviso ao escolher o som do computador, cancela por botão e por Esc, lembra a última escolha, e no app desktop traz a lista de janelas junto do aviso de plataforma;
+- **tela cheia**: pelo botão, por duplo clique e pela tecla F, saindo no Esc — e a tecla F não dispara enquanto se digita no chat;
+- **sair da transmissão**: o quadro some, o som dela é cortado, as outras seguem normais, a barra oferece o retorno, e a aba fechada some sozinha quando a pessoa para de transmitir.
+
+Também corrigi no caminho um defeito que só aparecia ao parar e recomeçar rápido: um evento atrasado de "faixa muda" derrubava o quadro da transmissão nova. Agora quem manda é o estado anunciado pela pessoa, e os eventos da faixa só pedem uma reavaliação.
 
 Durante esses testes apareceram dois problemas reais, que estão corrigidos no código:
 
