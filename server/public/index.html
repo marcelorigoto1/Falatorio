@@ -41,9 +41,13 @@
       <span id="conn-dot" class="dot" title="conectando…"></span>
     </div>
 
-    <div class="channel">
-      <span class="channel-icon">#</span> geral
-    </div>
+    <button type="button" class="channel" id="channel-btn"
+            title="Clique para mostrar ou esconder o chat">
+      <span class="channel-icon">#</span>
+      <span class="channel-name">geral</span>
+      <span class="channel-badge" id="chat-badge" hidden>0</span>
+      <span class="channel-chevron" id="chat-chevron">▾</span>
+    </button>
 
     <div class="peers-title">Na sala — <span id="peer-count">0</span></div>
     <ul id="peers" class="peers"></ul>
@@ -89,7 +93,7 @@
     </div>
   </aside>
 
-  <main class="main">
+  <main class="main" id="main">
     <div class="stage-wrap">
       <div id="view-bar" class="view-bar" hidden></div>
 

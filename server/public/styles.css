@@ -129,8 +129,30 @@ input[type="text"]:focus { border-color: var(--accent); }
   display: flex;
   gap: 6px;
   align-items: center;
+  width: 100%;
+  background: none;
+  border: 0;
+  font-family: inherit;
+  font-size: 14px;
+  text-align: left;
 }
+.channel:hover { color: var(--text); background: rgba(255, 255, 255, .04); }
 .channel-icon { color: #6b727c; font-size: 17px; }
+.channel-name { flex: 1; }
+
+.channel-chevron { font-size: 11px; opacity: .7; transition: transform .15s; }
+.app.sem-chat .channel-chevron { transform: rotate(-90deg); }
+
+.channel-badge {
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 1px 7px;
+  min-width: 20px;
+  text-align: center;
+}
 
 .peers-title {
   padding: 12px 16px 6px;
@@ -254,6 +276,21 @@ input[type="text"]:focus { border-color: var(--accent); }
   min-height: 0;
 }
 
+.main > .stage-wrap { grid-row: 1; }
+.main > .chat { grid-row: 2; }
+
+/* Chat escondido (ou transmissão maximizada): o palco ocupa tudo. */
+.main.sem-chat { grid-template-rows: minmax(0, 1fr); }
+.main.sem-chat .chat { display: none; }
+
+/* Maximizado: nem barra de abas, nem sobras — só a transmissão.
+   O esticar do quadro vem da classe .esticar na grade. */
+.main.maximizado .view-bar { display: none; }
+.main.maximizado .stage { padding: 0; }
+.main.maximizado .grid { gap: 0; }
+.main.maximizado .tile { border: 0; border-radius: 0; }
+.main.maximizado .tile-hint { display: none; }
+
 /* Barra de seleção + palco vivem juntos, para que esconder a barra não
    bagunce as linhas do layout principal. */
 .stage-wrap {
@@ -262,6 +299,10 @@ input[type="text"]:focus { border-color: var(--accent); }
   min-height: 0;
   min-width: 0;
 }
+/* Posição fixa na grade: se a barra de abas some (display:none), o palco
+   continua na linha elástica em vez de escorregar para a linha "auto". */
+.stage-wrap > .view-bar { grid-row: 1; }
+.stage-wrap > .stage { grid-row: 2; }
 
 /* ── Barra de "quem eu quero assistir" ───────────────────── */
 .view-bar {
@@ -373,26 +414,53 @@ input[type="text"]:focus { border-color: var(--accent); }
 .tile-tools button:hover { background: rgba(0, 0, 0, .85); border-color: var(--accent); }
 .tile-tools button.close:hover { border-color: var(--danger); color: #ffbcbc; }
 
-/* Tela cheia */
-.tile:fullscreen {
+/* Tela cheia do sistema.
+   A especificidade aqui precisa ganhar de ".grid.focus-mode .tile", senão o
+   quadro em tela cheia continua limitado ao tamanho da grade. */
+.grid .tile:fullscreen,
+.grid.esticar .tile:fullscreen,
+.grid.focus-mode .tile:fullscreen {
   aspect-ratio: auto;
+  max-width: none;
   max-height: none;
   width: 100vw;
   height: 100vh;
   border: 0;
   border-radius: 0;
   margin: 0;
+  background: #000;
 }
-.tile:fullscreen video { object-fit: contain; }
+.grid .tile:fullscreen video,
+.grid.esticar .tile:fullscreen video,
+.grid.focus-mode .tile:fullscreen video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
 .tile:fullscreen .tile-tools, .tile:fullscreen .tile-audio { opacity: 1; }
+.tile:fullscreen .tile-hint { display: none; }
 
 /* Aba de transmissão fechada */
 .view-tab.fechada { opacity: .6; text-decoration: line-through; }
 .view-tab.fechada:hover { opacity: 1; text-decoration: none; }
 
-/* Modo foco: uma tela só, ocupando o palco inteiro */
+/* Uma tela sozinha no palco (por foco, por maximizar ou porque só tem ela):
+   deixa de ser um cartão 16:9 e passa a ocupar todo o espaço disponível.
+   Sem definir a linha da grade, o "height: 100%" do quadro não tem contra o
+   que resolver e a proporção 16:9 acaba mandando. */
 .grid.focus-mode { grid-template-columns: 1fr; }
-.grid.focus-mode .tile { max-height: 100%; height: 100%; aspect-ratio: auto; }
+.grid.esticar {
+  grid-template-columns: 1fr;
+  grid-template-rows: minmax(0, 1fr);
+  align-content: stretch;
+}
+.grid.esticar .tile {
+  aspect-ratio: auto;
+  max-height: none;
+  height: 100%;
+  width: 100%;
+}
+.grid.esticar .tile video { width: 100%; height: 100%; object-fit: contain; }
 
 /* ── Chat ────────────────────────────────────────────────── */
 .chat { border-top: 1px solid var(--line); display: grid; grid-template-rows: 1fr auto; min-height: 0; }

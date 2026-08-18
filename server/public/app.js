@@ -36,6 +36,7 @@
   const LS_BUFFER = 'falatorio.buffer';
   const LS_SOM = 'falatorio.som';
   const LS_SAIDA = 'falatorio.saida';
+  const LS_CHAT = 'falatorio.chat';
 
   // ── Elementos ────────────────────────────────────────────
   const $ = (id) => document.getElementById(id);
@@ -44,7 +45,8 @@
     nameInput: $('name-input'), serverInput: $('server-input'),
     serverHint: $('server-hint'), joinBtn: $('join-btn'),
     passwordRow: $('password-row'), passwordInput: $('password-input'),
-    app: $('app'), connDot: $('conn-dot'),
+    app: $('app'), main: $('main'), connDot: $('conn-dot'),
+    channelBtn: $('channel-btn'), chatBadge: $('chat-badge'), chatChevron: $('chat-chevron'),
     peers: $('peers'), peerCount: $('peer-count'),
     micBtn: $('mic-btn'), micIcon: $('mic-icon'), micLabel: $('mic-label'),
     deafBtn: $('deaf-btn'), deafIcon: $('deaf-icon'), deafLabel: $('deaf-label'),
@@ -73,6 +75,9 @@
   let quality = localStorage.getItem(LS_QUALITY) || 'media';
   let bufferMs = Number(localStorage.getItem(LS_BUFFER) ?? 500);
   let viewing = 'todos';       // 'todos' ou o id de quem eu quero assistir
+  let maximizado = null;       // id da transmissão ocupando a tela toda
+  let chatVisivel = localStorage.getItem(LS_CHAT) !== 'nao';
+  let naoLidas = 0;
 
   /** peerId -> { name, muted, deafened, sharing, silenciado, pc, offerer, queue,
    *              makingOffer, ignoreOffer, videoTransceiver, videoStream,
@@ -209,6 +214,7 @@
     el.app.hidden = false;
     el.connDot.classList.add('on');
     renderPeers();
+    aplicarLayout();
     listarSaidas().catch(() => {});
     systemMessage(`Você entrou como ${name}.`);
     el.chatInput.focus();
@@ -876,16 +882,23 @@
 
     const hint = document.createElement('div');
     hint.className = 'tile-hint';
-    hint.textContent = 'clique para focar · 2 cliques = tela cheia';
+    hint.textContent = 'clique = focar · 2 cliques = maximizar';
 
-    // Ferramentas do quadro: tela cheia e fechar
+    // Ferramentas do quadro: maximizar, tela cheia e fechar
     const tools = document.createElement('div');
     tools.className = 'tile-tools';
+
+    const btnMax = document.createElement('button');
+    btnMax.type = 'button';
+    btnMax.className = 'btn-max';
+    btnMax.textContent = '⤢';
+    btnMax.title = 'Maximizar: ocupa a tela toda, sem chat (F)';
+    btnMax.addEventListener('click', (e) => { e.stopPropagation(); alternarMaximizado(id); });
 
     const btnFull = document.createElement('button');
     btnFull.type = 'button';
     btnFull.textContent = '⛶';
-    btnFull.title = 'Tela cheia (ou dê dois cliques no quadro)';
+    btnFull.title = 'Tela cheia do sistema (Shift+F)';
     btnFull.addEventListener('click', (e) => { e.stopPropagation(); alternarTelaCheia(tile); });
 
     const btnFechar = document.createElement('button');
@@ -895,9 +908,9 @@
     btnFechar.title = isLocal ? 'Esconder a sua prévia' : 'Sair desta transmissão (parar de assistir)';
     btnFechar.addEventListener('click', (e) => { e.stopPropagation(); fecharTransmissao(id); });
 
-    tools.append(btnFull, btnFechar);
+    tools.append(btnMax, btnFull, btnFechar);
     tile.append(video, tag, hint, tools);
-    tile.addEventListener('dblclick', () => alternarTelaCheia(tile));
+    tile.addEventListener('dblclick', (e) => { e.preventDefault(); alternarMaximizado(id); });
 
     // Volume do som daquela transmissão, só para quem assiste.
     if (peer) {
@@ -946,6 +959,7 @@
 
     el.grid.appendChild(tile);
     applyView();
+    atualizarBotoesDosQuadros();
   }
 
   /** Mostra o controle de volume só quando a transmissão tem som mesmo. */
@@ -963,7 +977,80 @@
     const tile = el.grid.querySelector(`.tile[data-peer="${CSS.escape(String(id))}"]`);
     if (tile) tile.remove();
     if (viewing === id) viewing = 'todos';
+    // Se a transmissão maximizada acabou, o layout volta ao normal sozinho.
+    if (maximizado === id) { maximizado = null; aplicarLayout(); }
     applyView();
+  }
+
+  // ── Chat retrátil ────────────────────────────────────────
+  //
+  // Clicar em "# geral" abre e fecha o chat. Quando ele está fechado, o
+  // palco ocupa também o espaço dele — é o mesmo mecanismo do maximizar.
+  function aplicarLayout() {
+    const esconderChat = !chatVisivel || !!maximizado;
+    el.main.classList.toggle('sem-chat', esconderChat);
+    el.main.classList.toggle('maximizado', !!maximizado);
+    el.app.classList.toggle('sem-chat', esconderChat);
+
+    if (!esconderChat) {
+      naoLidas = 0;
+      el.chatBadge.hidden = true;
+      el.messages.scrollTop = el.messages.scrollHeight;
+    }
+    el.channelBtn.title = esconderChat
+      ? 'Clique para mostrar o chat'
+      : 'Clique para esconder o chat e dar mais espaço às telas';
+    atualizarBotoesDosQuadros();
+  }
+
+  el.channelBtn.addEventListener('click', () => {
+    if (maximizado && !chatVisivel) {
+      // Estava maximizado: pedir o chat de volta desfaz o maximizar.
+      restaurar();
+      chatVisivel = true;
+    } else {
+      chatVisivel = !chatVisivel;
+    }
+    localStorage.setItem(LS_CHAT, chatVisivel ? 'sim' : 'nao');
+    aplicarLayout();
+  });
+
+  function marcarNaoLida() {
+    if (chatVisivel && !maximizado) return;
+    naoLidas += 1;
+    el.chatBadge.textContent = naoLidas > 99 ? '99+' : String(naoLidas);
+    el.chatBadge.hidden = false;
+  }
+
+  // ── Maximizar uma transmissão dentro do app ──────────────
+  function maximizar(id) {
+    maximizado = id;
+    setViewing(id);
+    aplicarLayout();
+  }
+
+  function restaurar() {
+    if (!maximizado) return;
+    maximizado = null;
+    setViewing('todos');
+    aplicarLayout();
+  }
+
+  function alternarMaximizado(id) {
+    if (maximizado === id) restaurar();
+    else maximizar(id);
+  }
+
+  /** Mantém os ícones dos quadros coerentes com o estado atual. */
+  function atualizarBotoesDosQuadros() {
+    el.grid.querySelectorAll('.tile').forEach((tile) => {
+      const btn = tile.querySelector('.btn-max');
+      if (!btn) return;
+      const ativo = maximizado === tile.dataset.peer;
+      btn.textContent = ativo ? '⤡' : '⤢';
+      btn.title = ativo ? 'Voltar ao tamanho normal (Esc)' : 'Maximizar: ocupa a tela toda, sem chat (F)';
+      tile.classList.toggle('maximizado', ativo);
+    });
   }
 
   // ── Tela cheia ───────────────────────────────────────────
@@ -980,22 +1067,26 @@
     pedir.call(tile).catch((err) => systemMessage(`Não deu para abrir em tela cheia: ${err.message}`));
   }
 
-  // O navegador já sai da tela cheia no Esc, mas garantimos aqui também —
-  // dentro do app Electron nem sempre esse atalho chega.
+  // Esc desfaz, em ordem: tela cheia do sistema, depois o maximizado.
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && document.fullscreenElement) {
-      document.exitFullscreen().catch(() => {});
-    }
+    if (e.key !== 'Escape') return;
+    if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); return; }
+    if (maximizado) restaurar();
   });
 
-  // F abre/fecha a tela cheia do quadro em foco (ou do único que existe).
+  // F maximiza/restaura; Shift+F usa a tela cheia do sistema.
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'f' && e.key !== 'F') return;
     if (/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) return;
     if (!el.app || el.app.hidden) return;
+
     const visiveis = [...el.grid.querySelectorAll('.tile')].filter((t) => !t.hidden);
     const alvo = document.fullscreenElement || visiveis[0];
-    if (alvo) { e.preventDefault(); alternarTelaCheia(alvo); }
+    if (!alvo) return;
+    e.preventDefault();
+
+    if (e.shiftKey) alternarTelaCheia(alvo);
+    else alternarMaximizado(alvo.dataset.peer);
   });
 
   // ── Sair de uma transmissão (parar de assistir) ──────────
@@ -1067,6 +1158,9 @@
     });
 
     el.grid.classList.toggle('focus-mode', viewing !== 'todos');
+    // Quadro sozinho no palco pode esticar e usar todo o espaço.
+    const visiveis = tiles.filter((t) => !t.hidden).length;
+    el.grid.classList.toggle('esticar', visiveis === 1);
 
     const semAssistir = fechadas();
     el.stageEmpty.hidden = tiles.length > 0 || semAssistir.length > 0;
@@ -1113,6 +1207,7 @@
   });
 
   function appendMessage({ id, name, text, ts }) {
+    if (id !== myId) marcarNaoLida();
     const wrap = document.createElement('div');
     wrap.className = 'msg';
     wrap.innerHTML = `

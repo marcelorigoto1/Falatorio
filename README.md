@@ -147,7 +147,9 @@ Os instaladores saem em `desktop/dist/`:
 9. **⏱️ Atraso** — escolhe quanto **você** segura as telas dos outros antes de exibir, para elas não engasgarem.
 10. **⏻ Sair** — desconecta e volta para a tela inicial.
 
-Nos quadros das transmissões: **⛶** abre em tela cheia, **✕** sai daquela transmissão, e o slider do canto controla o volume do som dela.
+Clique em **# geral** para esconder ou mostrar o chat.
+
+Nos quadros das transmissões: **⤢** maximiza (ocupa também a área do chat), **⛶** abre em tela cheia do sistema, **✕** sai daquela transmissão, e o slider do canto controla o volume do som dela.
 
 O chat de texto fica embaixo. As mensagens são **só da sessão**: quando você fecha o app, elas somem (era o combinado — nada é salvo em banco de dados).
 
@@ -167,7 +169,13 @@ Quando duas ou mais pessoas compartilham ao mesmo tempo, aparece uma barra em ci
 
 As telas escondidas ficam pausadas, o que economiza processador. A imagem continua chegando pela rede — para realmente cortar o consumo de banda de quem você não assiste seria preciso renegociar a conexão, o que traz de volta justamente a instabilidade que o projeto evita.
 
-**Tela cheia:** o botão ⛶ no canto do quadro, dois cliques no quadro, ou a tecla **F**. Sai com **Esc**.
+**Maximizar (⤢):** a transmissão passa a ocupar tudo — inclusive o espaço onde fica o chat. Dá para acionar pelo botão ⤢ do quadro, por dois cliques no quadro, ou pela tecla **F**. É só layout, dentro da janela do app: você continua vendo a lista de participantes e os controles. Sai com **Esc**, com a tecla **F** de novo, ou pelo botão ⤡.
+
+**Tela cheia do sistema (⛶):** a transmissão toma a tela inteira do monitor, sem barra lateral nem nada. Pelo botão ⛶ ou por **Shift+F**; sai com **Esc**.
+
+**Esconder o chat:** clique em **# geral** na barra lateral. O chat recolhe e as telas ganham o espaço; clique de novo para trazer de volta. Enquanto está fechado, as mensagens novas aparecem como um contador ao lado do nome do canal, e a preferência é lembrada na próxima vez que você entrar.
+
+Quando existe uma tela só no palco — porque só uma pessoa está transmitindo, porque você focou numa, ou porque maximizou — ela deixa de ser um cartão 16:9 e estica para usar todo o espaço disponível.
 
 **Sair de uma transmissão:** o botão ✕ no canto do quadro. Aquela tela some e o som dela é cortado — você continua na sala, conversando normalmente, só não assiste mais. Para voltar, clique no nome dela (que fica riscado) na barra **Assistindo**. Se a pessoa parar de transmitir e começar de novo, a transmissão nova já vem aberta.
 
@@ -246,10 +254,18 @@ Verificado com clientes reais (Chromium automatizado) rodando ao mesmo tempo, e 
 - **som da transmissão**: a conexão carrega mesmo 2 canais de áudio + 1 de vídeo, os dois áudios chegam simultaneamente, tocam em players separados, e o slider do quadro mexe só no som da transmissão — a voz continua intacta;
 - **atraso**: 0,5s aplicado na tela e no som dela, com a voz ficando em 0; trocar para 1,5s ou 0 reconfigura os receptores na hora;
 - **diálogo de compartilhamento**: começa em "sem som", mostra o aviso ao escolher o som do computador, cancela por botão e por Esc, lembra a última escolha, e no app desktop traz a lista de janelas junto do aviso de plataforma;
-- **tela cheia**: pelo botão, por duplo clique e pela tecla F, saindo no Esc — e a tecla F não dispara enquanto se digita no chat;
+- **tela cheia**: medida por geometria — o quadro precisa mesmo ocupar a viewport inteira, inclusive com o modo foco ligado, e não só reportar que entrou em tela cheia;
+- **maximizar**: o quadro cobre a altura toda, o chat some, o botão vira "restaurar", e nada disso depende da API de tela cheia — F, duplo clique e Esc conferidos;
+- **chat retrátil**: esconde e mostra pelo #geral, o espaço vai para as telas, o contador de não lidas aparece e zera, e a preferência sobrevive a recarregar a página;
+- os atalhos de teclado não disparam enquanto se digita no chat;
 - **sair da transmissão**: o quadro some, o som dela é cortado, as outras seguem normais, a barra oferece o retorno, e a aba fechada some sozinha quando a pessoa para de transmitir.
 
 Também corrigi no caminho um defeito que só aparecia ao parar e recomeçar rápido: um evento atrasado de "faixa muda" derrubava o quadro da transmissão nova. Agora quem manda é o estado anunciado pela pessoa, e os eventos da faixa só pedem uma reavaliação.
+
+E dois defeitos de CSS que faziam a tela cheia parecer quebrada:
+
+1. **A tela cheia abria, mas o quadro continuava pequeno.** A regra do modo foco (`.grid.focus-mode .tile`) tem especificidade maior que a de tela cheia e prendia o quadro à altura da grade. O teste antigo só verificava `document.fullscreenElement`, que estava certo — por isso passou sem pegar o problema. Agora o teste mede a geometria e exige que o quadro cubra a viewport.
+2. **Elemento escorregando de linha na grade.** Quando a barra de abas some com `display: none`, ela sai da grade e o palco escorrega para a linha "auto", que encolhe. As posições agora são fixas (`grid-row`), então esconder qualquer coisa não bagunça o resto. Era o mesmo defeito que já tinha derrubado o chat uma vez.
 
 Durante esses testes apareceram dois problemas reais, que estão corrigidos no código:
 
