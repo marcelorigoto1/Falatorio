@@ -609,28 +609,33 @@
     localStorage.setItem(LS_SOM, escolha.som);
     const querSom = escolha.som === 'sistema';
 
-    try {
-      if (desktop) await desktop.chooseSource(escolha.fonte, querSom);
+    // No app, a escolha da janela é entregue ao processo principal. Precisa
+    // ser refeita a cada tentativa: ela é consumida assim que a captura pede.
+    const armarFonte = () => (desktop ? desktop.chooseSource(escolha.fonte, querSom) : Promise.resolve());
 
+    try {
       const q = QUALITY[quality];
       const video = {
         width: { ideal: q.width, max: q.width },
         height: { ideal: q.height, max: q.height },
         frameRate: { ideal: q.fps, max: q.fps },
       };
-      // Som do jogo/vídeo: sem os filtros de voz, que estragariam a música.
-      const audio = querSom
-        ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
-        : false;
+      // IMPORTANTE: aqui vai "audio: true", puro. Um objeto de restrições
+      // (echoCancellation e afins) faz o Chromium recusar a captura de som do
+      // sistema — era por isso que só o áudio de guia do navegador funcionava.
+      // Som de tela não passa por filtro de voz nenhum, então não perdemos nada.
+      const opcoes = { video, audio: querSom };
       // Dica ao navegador: sem "sistema" na lista quando não queremos som.
-      const systemAudio = querSom ? 'include' : 'exclude';
+      if (querSom) opcoes.systemAudio = 'include';
 
+      await armarFonte();
       try {
-        screenStream = await navigator.mediaDevices.getDisplayMedia({ video, audio, systemAudio });
+        screenStream = await navigator.mediaDevices.getDisplayMedia(opcoes);
       } catch (err) {
         // Alguns sistemas recusam a captura quando pedimos som junto.
         if (querSom && err.name !== 'NotAllowedError') {
           log('captura com som falhou, tentando sem:', err.message);
+          await armarFonte();
           screenStream = await navigator.mediaDevices.getDisplayMedia({ video, audio: false });
         } else throw err;
       }
@@ -659,12 +664,34 @@
     sendState();
     renderPeers();
 
-    if (querSom && !somDaTela) {
-      systemMessage(desktop
-        ? 'Sua tela está sendo compartilhada, mas sem som — o sistema não liberou a captura de áudio (fora do Windows isso é o normal).'
-        : 'Sua tela está sendo compartilhada, mas sem som. No Chrome, é preciso marcar "Compartilhar áudio" na janelinha de seleção — e isso só aparece para telas inteiras e guias, não para janelas soltas.');
-    } else if (querSom && somDaTela) {
+    if (querSom && !somDaTela) explicarFaltaDeSom(track);
+    else if (querSom && somDaTela) {
       systemMessage('Compartilhando com o som do computador. Lembre: sai a mistura inteira da máquina, inclusive as vozes da chamada.');
+    }
+  }
+
+  /**
+   * Quando o som não vem, o motivo depende do que foi compartilhado. Dizer
+   * exatamente qual é evita a caçada às cegas.
+   */
+  function explicarFaltaDeSom(track) {
+    const tipo = (track.getSettings && track.getSettings().displaySurface) || 'desconhecido';
+
+    if (desktop) {
+      systemMessage(/win/i.test(navigator.userAgent)
+        ? 'A tela foi compartilhada, mas o Windows não entregou o som. Verifique se a saída de áudio padrão do sistema é a mesma em que o jogo está tocando.'
+        : 'A tela foi compartilhada sem som: a captura de som do sistema só funciona no Windows.');
+      return;
+    }
+
+    if (tipo === 'window') {
+      systemMessage('Sem som: o Chrome não captura o som de janelas soltas — só de telas inteiras e de guias. Para enviar o som, pare e compartilhe a TELA INTEIRA (marcando "Compartilhar áudio do sistema") ou uma GUIA do navegador (marcando "Compartilhar áudio da guia").');
+    } else if (tipo === 'monitor') {
+      systemMessage('Sem som: faltou marcar "Compartilhar áudio do sistema" na janelinha do Chrome — a caixinha fica no canto de baixo dela. Isso só existe no Windows.');
+    } else if (tipo === 'browser') {
+      systemMessage('Sem som: faltou marcar "Compartilhar áudio da guia" na janelinha do Chrome.');
+    } else {
+      systemMessage('A tela foi compartilhada, mas sem som.');
     }
   }
 
@@ -975,6 +1002,13 @@
 
   function removeTile(id) {
     const tile = el.grid.querySelector(`.tile[data-peer="${CSS.escape(String(id))}"]`);
+
+    // A transmissão que estava em tela cheia acabou: sair antes de tirar o
+    // quadro, senão a janela fica cobrindo o sistema sem nada dentro.
+    if (tile && (document.fullscreenElement === tile || (telaCheiaDaJanela && maximizado === id))) {
+      sairDaTelaCheia();
+    }
+
     if (tile) tile.remove();
     if (viewing === id) viewing = 'todos';
     // Se a transmissão maximizada acabou, o layout volta ao normal sozinho.
@@ -1054,24 +1088,67 @@
   }
 
   // ── Tela cheia ───────────────────────────────────────────
-  function alternarTelaCheia(tile) {
+  //
+  // No app desktop NÃO usamos a API de tela cheia do HTML. Ela deixava a
+  // janela cobrindo o sistema sem um caminho confiável de volta — daí o
+  // Alt+Tab e o botão Windows parecerem travados durante e depois da
+  // transmissão. Agora quem manda é a janela, e o processo principal garante
+  // a saída no Esc, ao perder o foco e quando a transmissão acaba.
+  let telaCheiaDaJanela = false;
+
+  if (desktop && desktop.onFullScreen) {
+    desktop.onFullScreen((ligada) => {
+      telaCheiaDaJanela = ligada;
+      if (!ligada && maximizado) restaurar();
+      atualizarBotoesDosQuadros();
+    });
+  }
+
+  async function alternarTelaCheia(tile) {
+    const id = tile.dataset.peer;
+    const video = tile.querySelector('video');
+    if (video) video.play().catch(() => {});
+
+    if (desktop && desktop.setFullScreen) {
+      const ligar = !telaCheiaDaJanela;
+      if (ligar) maximizar(id); else restaurar();
+      telaCheiaDaJanela = await desktop.setFullScreen(ligar);
+      return;
+    }
+
     if (document.fullscreenElement === tile) {
       document.exitFullscreen().catch(() => {});
       return;
     }
     const pedir = tile.requestFullscreen || tile.webkitRequestFullscreen;
     if (!pedir) { systemMessage('Este navegador não permite tela cheia.'); return; }
-    // Em tela cheia o quadro precisa estar tocando, mesmo se estava pausado.
-    const video = tile.querySelector('video');
-    if (video) video.play().catch(() => {});
     pedir.call(tile).catch((err) => systemMessage(`Não deu para abrir em tela cheia: ${err.message}`));
   }
 
-  // Esc desfaz, em ordem: tela cheia do sistema, depois o maximizado.
+  /** Sai de qualquer tela cheia, seja da janela ou do navegador. */
+  function sairDaTelaCheia() {
+    if (desktop && desktop.setFullScreen && telaCheiaDaJanela) {
+      desktop.setFullScreen(false).catch(() => {});
+      return true;
+    }
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+      return true;
+    }
+    return false;
+  }
+
+  // Esc desfaz, em ordem: tela cheia, depois o maximizado.
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); return; }
+    if (sairDaTelaCheia()) return;
     if (maximizado) restaurar();
+  });
+
+  // Rede extra: se a janela do app perder o foco (Alt+Tab), a tela cheia sai.
+  // O processo principal já faz isso; aqui garantimos também no navegador.
+  window.addEventListener('blur', () => {
+    if (!desktop && document.fullscreenElement) document.exitFullscreen().catch(() => {});
   });
 
   // F maximiza/restaura; Shift+F usa a tela cheia do sistema.
@@ -1240,10 +1317,10 @@
 
   function renderPeers() {
     const all = [
-      { id: myId, name: `${myName} (você)`, muted, deafened, sharing, eu: true },
+      { id: myId, name: `${myName} (você)`, muted, deafened, sharing, sharingAudio, eu: true },
       ...[...peers.values()].map((p) => ({
         id: p.id, name: p.name, muted: p.muted, deafened: p.deafened,
-        sharing: p.sharing, silenciado: p.silenciado,
+        sharing: p.sharing, sharingAudio: p.sharingAudio, silenciado: p.silenciado,
       })),
     ];
     el.peerCount.textContent = String(all.length);
@@ -1256,6 +1333,7 @@
 
       const tags = [
         p.sharing ? '🖥️' : '',
+        p.sharing && p.sharingAudio ? '🔊' : '',
         p.deafened ? '🎧' : '',
         p.muted ? '🔇' : '',
       ].join('');

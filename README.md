@@ -171,7 +171,9 @@ As telas escondidas ficam pausadas, o que economiza processador. A imagem contin
 
 **Maximizar (⤢):** a transmissão passa a ocupar tudo — inclusive o espaço onde fica o chat. Dá para acionar pelo botão ⤢ do quadro, por dois cliques no quadro, ou pela tecla **F**. É só layout, dentro da janela do app: você continua vendo a lista de participantes e os controles. Sai com **Esc**, com a tecla **F** de novo, ou pelo botão ⤡.
 
-**Tela cheia do sistema (⛶):** a transmissão toma a tela inteira do monitor, sem barra lateral nem nada. Pelo botão ⛶ ou por **Shift+F**; sai com **Esc**.
+**Tela cheia do sistema (⛶):** a transmissão toma a tela inteira do monitor. Pelo botão ⛶ ou por **Shift+F**; sai com **Esc**, ao trocar de janela (Alt+Tab), ou quando a transmissão acaba.
+
+No app desktop, a tela cheia é da **janela**, não a do HTML. A diferença importa: a versão HTML deixava a janela cobrindo o sistema sem um caminho confiável de volta, e era o que fazia o Alt+Tab e o botão Windows parecerem travados. Agora existem três saídas garantidas, e a janela nunca fica por cima de tudo.
 
 **Esconder o chat:** clique em **# geral** na barra lateral. O chat recolhe e as telas ganham o espaço; clique de novo para trazer de volta. Enquanto está fechado, as mensagens novas aparecem como um contador ao lado do nome do canal, e a preferência é lembrada na próxima vez que você entrar.
 
@@ -189,7 +191,17 @@ Cada conexão reserva **dois canais de áudio**: um para a sua voz e outro para 
 
 A voz também recebe tratamento diferente do som do jogo: a voz passa por cancelamento de eco e supressão de ruído, enquanto o som da tela vai cru, sem esses filtros — eles são ótimos para fala e péssimos para música.
 
-**Onde funciona:** no Windows, tanto no app quanto no Chrome. No Chrome é preciso marcar *"Compartilhar áudio"* na janelinha dele, e isso só aparece para telas inteiras e guias — janelas soltas não têm essa opção. No Mac e no Linux o sistema normalmente não deixa capturar o som interno; nesse caso vai só a imagem e o app avisa por mensagem, sem quebrar nada.
+**Onde funciona:**
+
+| Como você compartilha | Sai som? |
+|---|---|
+| App desktop, Windows (qualquer tela ou janela) | Sim — som do sistema |
+| App desktop, Mac ou Linux | Não — o sistema não libera |
+| Chrome, **guia** do navegador | Sim, marcando *"Compartilhar áudio da guia"* |
+| Chrome, **tela inteira** (Windows) | Sim, marcando *"Compartilhar áudio do sistema"* |
+| Chrome, **janela solta** | Não — o Chrome não captura áudio de janelas |
+
+Quando o som não vem, o app diz o motivo exato daquele caso, em vez de um aviso genérico. E quem está transmitindo com som aparece com um 🔊 ao lado do nome na lista, então dá para conferir na hora se está saindo mesmo.
 
 ### Por que sai o som do computador inteiro (e como mandar só o do jogo)
 
@@ -258,9 +270,16 @@ Verificado com clientes reais (Chromium automatizado) rodando ao mesmo tempo, e 
 - **maximizar**: o quadro cobre a altura toda, o chat some, o botão vira "restaurar", e nada disso depende da API de tela cheia — F, duplo clique e Esc conferidos;
 - **chat retrátil**: esconde e mostra pelo #geral, o espaço vai para as telas, o contador de não lidas aparece e zera, e a preferência sobrevive a recarregar a página;
 - os atalhos de teclado não disparam enquanto se digita no chat;
+- **no app Electron de verdade**: a captura pede `audio: true` e `systemAudio: include`; a tela cheia é da janela e não da API HTML; e as três saídas foram testadas uma a uma — Esc, perda de foco e fim da transmissão — verificando `isFullScreen()` do lado do processo principal, além de a janela nunca estar com "sempre por cima";
 - **sair da transmissão**: o quadro some, o som dela é cortado, as outras seguem normais, a barra oferece o retorno, e a aba fechada some sozinha quando a pessoa para de transmitir.
 
 Também corrigi no caminho um defeito que só aparecia ao parar e recomeçar rápido: um evento atrasado de "faixa muda" derrubava o quadro da transmissão nova. Agora quem manda é o estado anunciado pela pessoa, e os eventos da faixa só pedem uma reavaliação.
+
+Depois, com o app já em uso, apareceram dois defeitos que só dava para ver rodando de verdade no Windows:
+
+**O som só saía de guias do navegador.** A captura pedia o áudio com um objeto de restrições (`echoCancellation: false` e afins). O Chromium recusa esse pedido para som de sistema, o app caía na tentativa sem áudio e compartilhava mudo — enquanto o áudio de guia, que segue outro caminho, funcionava. Agora o pedido é `audio: true`, puro. Não se perde nada: áudio de tela não passa por filtro de voz nenhum. No mesmo trecho havia um segundo defeito escondido: na tentativa sem som, a janela escolhida no diálogo já tinha sido consumida, então o app compartilhava a tela errada.
+
+**Alt+Tab e o botão Windows travando durante e depois da transmissão.** A tela cheia usava a API do HTML; no Windows isso põe a janela do Electron cobrindo a tela inteira, inclusive a barra de tarefas, sem um caminho confiável de volta — e quando a transmissão acabava, o quadro sumia mas a janela continuava lá, cobrindo tudo. Não era o Keyboard Lock (essa API nunca liga sozinha, precisa ser chamada, e o Falatório não a chama). A tela cheia agora é da janela, controlada pelo processo principal, com três saídas garantidas: **Esc**, **perder o foco** (que é exatamente o que o Alt+Tab faz) e **o fim da transmissão**. A janela também nunca fica com "sempre por cima".
 
 E dois defeitos de CSS que faziam a tela cheia parecer quebrada:
 

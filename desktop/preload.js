@@ -7,4 +7,13 @@ contextBridge.exposeInMainWorld('falatorio', {
   defaultServer: process.env.FALATORIO_SERVER || '',
   getSources: () => ipcRenderer.invoke('falatorio:get-sources'),
   chooseSource: (id, comSom) => ipcRenderer.invoke('falatorio:choose-source', id, !!comSom),
+
+  // Tela cheia pela janela (não pela API HTML): o processo principal garante
+  // a saída no Esc e ao perder o foco, para não prender o Alt+Tab.
+  setFullScreen: (ligar) => ipcRenderer.invoke('falatorio:set-fullscreen', !!ligar),
+  isFullScreen: () => ipcRenderer.invoke('falatorio:is-fullscreen'),
+  onFullScreen: (cb) => {
+    ipcRenderer.removeAllListeners('falatorio:fullscreen');
+    ipcRenderer.on('falatorio:fullscreen', (_ev, valor) => cb(!!valor));
+  },
 });

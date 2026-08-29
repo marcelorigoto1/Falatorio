@@ -9,6 +9,16 @@ const DEFAULT_SERVER = process.env.FALATORIO_SERVER || '';
 let pendingSourceId = null;
 let pendingWithAudio = false;
 
+/** Liga/desliga a tela cheia da JANELA e avisa a interface. */
+function definirTelaCheia(win, ligar) {
+  if (!win || win.isDestroyed()) return false;
+  if (win.isFullScreen() !== ligar) win.setFullScreen(ligar);
+  if (!win.webContents.isDestroyed()) {
+    win.webContents.send('falatorio:fullscreen', win.isFullScreen());
+  }
+  return win.isFullScreen();
+}
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1180,
@@ -18,6 +28,7 @@ function createWindow() {
     backgroundColor: '#16181d',
     title: 'Falatório',
     autoHideMenuBar: true,
+    fullscreenable: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -25,6 +36,30 @@ function createWindow() {
       sandbox: false,
     },
   });
+
+  // A janela nunca fica por cima de tudo: em tela cheia, isso é o que faz o
+  // Alt+Tab e o menu Iniciar parecerem "travados" no Windows.
+  win.setAlwaysOnTop(false);
+
+  // ── Saídas garantidas da tela cheia ───────────────────────
+  // Três redes de segurança para a janela nunca ficar presa cobrindo o
+  // sistema: Esc, perder o foco (Alt+Tab) e o fechamento pela própria janela.
+  win.webContents.on('before-input-event', (_event, input) => {
+    if (input.type === 'keyDown' && input.key === 'Escape' && win.isFullScreen()) {
+      definirTelaCheia(win, false);
+    }
+  });
+
+  win.on('blur', () => {
+    if (win.isFullScreen()) definirTelaCheia(win, false);
+  });
+
+  win.on('enter-full-screen', () => win.webContents.send('falatorio:fullscreen', true));
+  win.on('leave-full-screen', () => win.webContents.send('falatorio:fullscreen', false));
+
+  // Se a página tentar a tela cheia por conta própria (API HTML), devolvemos
+  // ao controle da janela, que é o caminho que sabemos desfazer.
+  win.on('leave-html-full-screen', () => definirTelaCheia(win, false));
 
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 
@@ -85,6 +120,16 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle('falatorio:default-server', () => DEFAULT_SERVER);
+
+  // Tela cheia controlada pela janela, e não pela API HTML: assim o app
+  // sempre sabe como sair, inclusive quando a transmissão acaba sozinha.
+  ipcMain.handle('falatorio:set-fullscreen', (ev, ligar) =>
+    definirTelaCheia(BrowserWindow.fromWebContents(ev.sender), !!ligar));
+
+  ipcMain.handle('falatorio:is-fullscreen', (ev) => {
+    const win = BrowserWindow.fromWebContents(ev.sender);
+    return !!win && !win.isDestroyed() && win.isFullScreen();
+  });
 
   createWindow();
 
