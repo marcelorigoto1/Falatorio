@@ -16,4 +16,17 @@ contextBridge.exposeInMainWorld('falatorio', {
     ipcRenderer.removeAllListeners('falatorio:fullscreen');
     ipcRenderer.on('falatorio:fullscreen', (_ev, valor) => cb(!!valor));
   },
+
+  // Som de um aplicativo só: o processo principal captura pelo Windows e
+  // manda o áudio bruto para cá, onde ele vira uma faixa da chamada.
+  appAudio: {
+    status: () => ipcRenderer.invoke('falatorio:app-audio-status'),
+    listar: () => ipcRenderer.invoke('falatorio:app-audio-list'),
+    iniciar: (pid) => ipcRenderer.invoke('falatorio:app-audio-start', pid),
+    parar: () => ipcRenderer.invoke('falatorio:app-audio-stop'),
+    aoReceber: (cb) => {
+      ipcRenderer.removeAllListeners('falatorio:app-audio-chunk');
+      ipcRenderer.on('falatorio:app-audio-chunk', (_ev, chunk) => cb(chunk));
+    },
+  },
 });

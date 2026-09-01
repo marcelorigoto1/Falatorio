@@ -1,5 +1,6 @@
 const path = require('path');
 const { app, BrowserWindow, session, desktopCapturer, ipcMain, shell } = require('electron');
+const appAudio = require('./app-audio');
 
 // Endereço padrão do servidor que aparece na tela de entrada.
 // Defina em tempo de build (FALATORIO_SERVER) ou deixe o usuário digitar.
@@ -34,6 +35,9 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      // A música da sala começa a tocar sozinha quando alguém põe na fila;
+      // sem isso o Chromium exigiria um clique dentro do quadro do player.
+      autoplayPolicy: 'no-user-gesture-required',
     },
   });
 
@@ -131,6 +135,24 @@ app.whenReady().then(() => {
     return !!win && !win.isDestroyed() && win.isFullScreen();
   });
 
+  // ── Som de um aplicativo só (Windows) ─────────────────────
+  ipcMain.handle('falatorio:app-audio-status', () => ({
+    disponivel: appAudio.disponivel(),
+    motivo: appAudio.motivo(),
+    formato: appAudio.FORMATO,
+  }));
+
+  ipcMain.handle('falatorio:app-audio-list', () => appAudio.listarAplicativos());
+
+  ipcMain.handle('falatorio:app-audio-start', (ev, pid) => {
+    const wc = ev.sender;
+    return appAudio.iniciar(pid, (chunk) => {
+      if (!wc.isDestroyed()) wc.send('falatorio:app-audio-chunk', chunk);
+    });
+  });
+
+  ipcMain.handle('falatorio:app-audio-stop', () => { appAudio.parar(); return true; });
+
   createWindow();
 
   app.on('activate', () => {
@@ -139,5 +161,8 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  appAudio.parar();
   if (process.platform !== 'darwin') app.quit();
 });
+
+app.on('before-quit', () => appAudio.parar());

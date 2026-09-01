@@ -17,13 +17,21 @@
     "electron": "^31.3.1",
     "electron-builder": "^24.13.3"
   },
+  "optionalDependencies": {
+    "loopback-capture": "^2.0.0"
+  },
   "build": {
     "appId": "com.falatorio.app",
     "productName": "Falatorio",
     "files": [
       "main.js",
       "preload.js",
-      "renderer/**/*"
+      "app-audio.js",
+      "renderer/**/*",
+      "node_modules/**/*"
+    ],
+    "asarUnpack": [
+      "**/node_modules/loopback-capture/**"
     ],
     "win": {
       "target": [

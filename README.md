@@ -1,14 +1,14 @@
 # Falatório
 
-Um "Discord caseiro" para você e seus amigos: **chat de voz**, **chat de texto** e **compartilhamento de tela**. Sem cadastro, sem anúncios, sem servidor de terceiros no meio das suas conversas.
+Um "Discord caseiro" para você e seus amigos: **chat de voz**, **chat de texto**, **compartilhamento de tela** e **webcam**. Sem cadastro, sem anúncios, sem servidor de terceiros no meio das suas conversas.
 
-A voz e a tela vão **direto de um computador para o outro** (P2P, via WebRTC). O servidor só apresenta as pessoas umas às outras e entrega as mensagens de texto — ele nunca vê nem grava seu áudio.
+Voz, tela e câmera vão **direto de um computador para o outro** (P2P, via WebRTC). O servidor só apresenta as pessoas umas às outras e entrega as mensagens de texto — ele nunca vê nem grava seu áudio.
 
 ```
 ┌──────────────┐        sinalização        ┌──────────────┐
 │  Você (app)  │ ────────────────────────► │   Servidor   │
 └──────┬───────┘                           └──────────────┘
-       │  voz + tela direto (P2P)                 ▲
+       │  voz + tela + câmera direto (P2P)        ▲
        ▼                                          │
 ┌──────────────┐ ─────────────────────────────────┘
 │ Amigo (app)  │
@@ -49,6 +49,39 @@ O servidor precisa estar na internet com HTTPS, porque navegador e Electron só 
 4. Ao terminar você recebe um endereço tipo `https://falatorio.onrender.com`. **Guarde esse endereço** — é o que todo mundo vai colocar no app.
 
 > ⚠️ **O plano grátis hiberna** depois de ~15 minutos sem ninguém. A primeira pessoa que entrar pode esperar ~40 segundos enquanto ele acorda. É só isso — depois fica normal.
+
+### Servidor na sua própria máquina
+
+Também dá para rodar o servidor em casa, sem Render nenhum. O que muda:
+
+**Não deixa a chamada mais rápida.** Voz e tela já vão direto de um computador para o outro; o servidor nunca toca nelas. O que você ganha é não depender de terceiro e acabar com a hibernação de 15 minutos.
+
+**A pegadinha é o HTTPS**, e ela depende de como cada um entra:
+
+| Quem entra | Servidor em `http://` puro (sem certificado) |
+|---|---|
+| Pelo **app instalado** | Funciona, microfone incluído — a interface vem de arquivo local, que o navegador já considera seguro |
+| Pelo **navegador**, por IP | **Não funciona**: sem HTTPS o `navigator.mediaDevices` nem existe, então não há microfone nem tela |
+| Pelo navegador, em `localhost` | Funciona (exceção da regra, vale só para quem está na própria máquina) |
+
+Ou seja: se todo mundo usar o app instalado, um servidor caseiro em HTTP simples resolve. Se alguém for usar pelo navegador, precisa de HTTPS.
+
+**No Brasil tem um obstáculo a mais:** muitos provedores usam CGNAT, então você não tem IP público de verdade e abrir porta no roteador não adianta. O caminho que passa por cima disso — e ainda entrega HTTPS de graça — é um túnel:
+
+```powershell
+# 1) suba o servidor (dentro da pasta server; ou clique em iniciar-windows.bat)
+npm install
+npm start
+
+# 2) noutra janela, exponha com um endereço HTTPS temporário
+cloudflared tunnel --url http://localhost:3000
+```
+
+O `cloudflared` imprime um endereço `https://algo.trycloudflare.com` — é esse que a galera põe no campo "Servidor". Não precisa abrir porta, não precisa de IP fixo, e funciona atrás de CGNAT. Para um endereço fixo, dá para criar um túnel nomeado com um domínio seu, também sem custo.
+
+Duas notas práticas: o computador precisa ficar ligado enquanto vocês usam, e a senha da sala continua vindo do `.env` (copie o `.env.example`).
+
+**O que um servidor no Brasil melhoraria de verdade** é outra coisa: o servidor **TURN**. Ele só entra quando a conexão direta falha, e o TURN público que vem configurado fica no exterior — nesse caso o áudio dá a volta pelo mundo. Subir um `coturn` aqui resolveria justamente essa situação, mas ele precisa de portas UDP abertas, o que o CGNAT impede. Fica como ideia para quem tiver IP público.
 
 ### Railway (alternativa)
 
@@ -142,16 +175,30 @@ Os instaladores saem em `desktop/dist/`:
 4. **🔈 Ensurdecer** — você para de ouvir todo mundo. Como no Discord, isso também fecha seu microfone (se você não está ouvindo, não faz sentido continuar sendo ouvido sem saber). Ao desfazer, o microfone volta como estava antes.
 5. **🔊 ao lado de cada nome** — silencia **só aquela pessoa**, e só para você. Ninguém mais é afetado e a pessoa não fica sabendo.
 6. **🖥️ Compartilhar tela** — abre um diálogo para escolher a tela ou janela **e se vai com som**. Clique de novo para parar.
-7. **🎧 Ouvir a chamada em** — escolhe por qual aparelho você ouve as vozes. Aparece quando há mais de uma saída de áudio, e é a chave para transmitir só o som do jogo (explicado abaixo).
-8. **⚙️ Qualidade** — escolhe como **sua** tela é enviada. Vale trocar a qualquer momento, inclusive no meio do compartilhamento.
-9. **⏱️ Atraso** — escolhe quanto **você** segura as telas dos outros antes de exibir, para elas não engasgarem.
-10. **⏻ Sair** — desconecta e volta para a tela inicial.
+7. **📷 Ligar câmera** — manda sua webcam para a sala (explicado abaixo). Clique de novo para desligar.
+8. **🎧 Ouvir a chamada em** — escolhe por qual aparelho você ouve as vozes. Aparece quando há mais de uma saída de áudio, e é a chave para transmitir só o som do jogo (explicado abaixo).
+9. **⚙️ Qualidade** — escolhe como **sua** tela é enviada. Vale trocar a qualquer momento, inclusive no meio do compartilhamento.
+10. **⏱️ Atraso** — escolhe quanto **você** segura as telas dos outros antes de exibir, para elas não engasgarem.
+11. **📣 Modo Fiore** — efeitos sonoros nos acontecimentos da sala (explicado abaixo).
+12. **⏻ Sair** — desconecta e volta para a tela inicial.
 
-Clique em **# geral** para esconder ou mostrar o chat.
+Clique em **# geral** para esconder ou mostrar o chat, e em **♪ música** para abrir a fila.
 
 Nos quadros das transmissões: **⤢** maximiza (ocupa também a área do chat), **⛶** abre em tela cheia do sistema, **✕** sai daquela transmissão, e o slider do canto controla o volume do som dela.
 
 O chat de texto fica embaixo. As mensagens são **só da sessão**: quando você fecha o app, elas somem (era o combinado — nada é salvo em banco de dados).
+
+### A webcam
+
+O botão **📷 Ligar câmera** manda seu rosto para a sala. Alguns detalhes que valem saber:
+
+- **A câmera é um quadro à parte da tela.** Se você estiver compartilhando tela *e* com a câmera ligada, os outros veem dois quadros seus, cada um com nome próprio (`Você` e `Você 📷`). Dá para maximizar, focar ou fechar cada um separadamente.
+- **A sua prévia vem espelhada**, como num espelho de verdade. Só a sua — para os outros você aparece do jeito certo.
+- **A câmera não entra no atraso.** O botão ⏱️ segura só as telas; rosto e voz precisam andar no mesmo passo, senão a boca descola do som.
+- **Banda própria e modesta**: 720p a 30 fps, limitada a ~1,2 Mbps, independente do preset de qualidade da tela. Mesmo transmitindo em Alta, a câmera não rouba espaço do jogo.
+- **Mais de uma câmera?** Um seletor 🎥 aparece embaixo do botão assim que o app enxerga duas ou mais. A escolha fica lembrada.
+- Quem tem a câmera ligada aparece com **📷** na lista da sala.
+- Ligar e desligar **não renegocia a conexão** — o canal da câmera já nasce reservado, como o da tela. Ninguém perde o quadro de ninguém quando você mexe na sua.
 
 ### Escolhendo a qualidade
 
@@ -195,7 +242,8 @@ A voz também recebe tratamento diferente do som do jogo: a voz passa por cancel
 
 | Como você compartilha | Sai som? |
 |---|---|
-| App desktop, Windows (qualquer tela ou janela) | Sim — som do sistema |
+| App desktop, Windows 10 2004+ 64 bits | Sim — **só do aplicativo escolhido**, ou do sistema todo |
+| App desktop, Windows mais antigo ou 32 bits | Sim, mas só a mistura do sistema |
 | App desktop, Mac ou Linux | Não — o sistema não libera |
 | Chrome, **guia** do navegador | Sim, marcando *"Compartilhar áudio da guia"* |
 | Chrome, **tela inteira** (Windows) | Sim, marcando *"Compartilhar áudio do sistema"* |
@@ -203,19 +251,73 @@ A voz também recebe tratamento diferente do som do jogo: a voz passa por cancel
 
 Quando o som não vem, o app diz o motivo exato daquele caso, em vez de um aviso genérico. E quem está transmitindo com som aparece com um 🔊 ao lado do nome na lista, então dá para conferir na hora se está saindo mesmo.
 
-### Por que sai o som do computador inteiro (e como mandar só o do jogo)
+### Som só de um aplicativo (o jeito bom)
 
-Esta é uma limitação real do Chromium, não uma escolha do projeto: **não existe captura de áudio por aplicativo**. O que o navegador entrega é a *mistura final da sua saída de áudio* — o jogo, o navegador, as notificações e, pior, as vozes da própria chamada, que voltam como eco para quem está falando.
+**No app desktop, no Windows 10 (build 2004+) 64 bits**, o diálogo oferece uma terceira opção: **Som só de um aplicativo**. Você escolhe o programa numa lista e vai apenas o som dele — sem as vozes da chamada, sem notificações, sem o resto da máquina. Se você escolher compartilhar uma janela, o app já tenta adivinhar qual programa é e deixa ele pré-selecionado.
 
-O jeito que funciona de verdade é separar as saídas de áudio:
+Por que isso precisou de código nativo: o navegador não sabe separar áudio por programa. Ele só entrega o som de uma guia ou a mistura inteira da saída de áudio. Quem sabe separar é o **Windows**, através da Application Loopback API (a mesma que o OBS usa no "Application Audio Capture"), e o Chromium nunca expôs essa API para o JavaScript. Então o Falatório usa uma biblioteca nativa (`loopback-capture`) no processo principal do Electron: ela entrega o áudio bruto do processo escolhido, que atravessa para a interface e vira uma faixa da chamada — indo pelo canal de som da transmissão que já existe, sem renegociar nada.
+
+O binário já vem compilado no pacote, então **ninguém precisa instalar compilador**. E tudo é opcional: se a biblioteca não carregar (outro sistema, Windows antigo, 32 bits), a opção simplesmente não aparece e o resto do app funciona igual.
+
+### Quando só existe "Som do computador"
+
+Fora daquele caso — no navegador, ou no Mac e Linux — vale a limitação de sempre: o que sai é a *mistura final da saída de áudio*, incluindo as vozes da chamada, que voltam como eco.
+
+Se isso incomodar e você não puder usar o app no Windows, dá para separar as saídas:
 
 1. Deixe o **jogo tocando na saída principal** (as caixas de som, por exemplo).
 2. Na barra lateral, em **🎧**, escolha ouvir a chamada **em outro aparelho** (um fone USB, um headset Bluetooth).
 3. Compartilhe com **Som do computador**.
 
-Como a captura pega a mistura da saída principal e as vozes agora saem por outro aparelho, o que vai para os amigos é só o som do jogo. Esse seletor só aparece quando o sistema tem mais de uma saída disponível.
+Como a captura pega a mistura da saída principal e as vozes agora saem por outro aparelho, vai só o som do jogo. Esse seletor só aparece quando o sistema tem mais de uma saída disponível.
 
-Se você tem só uma saída de áudio, as opções honestas são: transmitir **sem som**, ou aceitar que vai a mistura toda (e nesse caso vale todo mundo silenciar sua transmissão pelo slider do quadro quando o eco incomodar). A alternativa avançada é instalar um cabo de áudio virtual e mandar só o jogo para ele — mas aí já é configuração de sistema, fora do que o app controla.
+### Música para a sala inteira
+
+Clique em **♪ música** na barra lateral. Você busca pelo nome ou cola um link do YouTube, e a música toca **para todo mundo ao mesmo tempo** — com fila, pular, pausar e volume individual.
+
+Também funciona por comandos no chat, como nos bots:
+
+| Comando | O que faz |
+|---|---|
+| `/tocar <nome ou link>` | Busca e põe na fila |
+| `/pular` | Passa para a próxima |
+| `/pausar` e `/voltar` | Pausa e retoma para todos |
+| `/fila` | Abre o painel |
+
+**Como funciona por dentro, e por que assim.** O jeito clássico dos bots do Discord era baixar o áudio do YouTube e injetá-lo na chamada. Foi exatamente isso que derrubou o Groovy e o Rythm em 2021, quando o Google mandou notificação extrajudicial: aquilo viola os termos do YouTube.
+
+Aqui o desenho é outro. O servidor **não toca e não transmite áudio nenhum** — ele guarda apenas *qual vídeo* e *em que segundo*. O player oficial do YouTube roda na máquina de cada pessoa, no mesmo trecho, e a cada 5 segundos o servidor manda uma batida de sincronia; quem escorregou mais de 1,5s se corrige sozinho.
+
+Isso rende três vantagens práticas, além de não depender de nada proibido:
+
+- o áudio chega **em qualidade cheia**, direto do YouTube, sem ser reencodado para caber no canal de voz (é por isso que música em bot soa abafada);
+- **não gasta o upload de ninguém** — cada pessoa recebe do YouTube, não de você;
+- quem entra no meio **cai no ponto exato** em que a música está.
+
+**Busca por nome (opcional).** Para procurar pelo nome, o servidor precisa de uma chave da API do YouTube na variável `YOUTUBE_API_KEY` — é grátis, e a cota diária dá cerca de 100 buscas. Pegue em `console.cloud.google.com`: criar projeto → ativar "YouTube Data API v3" → Credenciais → Criar chave de API. **Sem a chave, colar o link continua funcionando normalmente**, inclusive pegando o título do vídeo.
+
+Duas coisas que valem saber: vídeos cujo dono proíbe reprodução fora do YouTube são pulados automaticamente, com aviso no chat; e a fila é zerada quando a sala esvazia, para ninguém entrar horas depois no meio do que ficou tocando.
+
+### Modo Fiore
+
+O botão **📣 Modo Fiore**, logo acima do Sair, liga os efeitos sonoros da sala:
+
+| Acontecimento | Som |
+|---|---|
+| Alguém entra na call (inclusive você) | "voltei hein galera" |
+| Alguém sai | "que que eu saia" |
+| Alguém abre a stream | sorteia entre os dois áudios de stream |
+| Alguém se muta (inclusive você) | "tá mutado" |
+
+Três decisões que valem explicar:
+
+**É individual e local.** Você liga para você; nada disso trafega pela chamada nem chega no ouvido de quem não ligou. Vem desligado por padrão — ninguém devia ser recebido por um efeito sonoro sem ter pedido — e a escolha é lembrada.
+
+**Tem freio.** Em bagunça — todo mundo entrando junto, alguém batendo no botão de mudo — isso viraria uma salada. Então só toca um efeito por vez (700 ms entre um e outro) e o mesmo evento não se repete antes de 2,5 s.
+
+**Respeita o ensurdecer.** Se você está com 🎧 ligado, os efeitos também ficam calados: você pediu silêncio, então é silêncio.
+
+Os arquivos ficam em `server/public/sons/`. Para trocar por outros, basta substituir mantendo os nomes (`entrar.ogg`, `sair.mp3`, `stream-1.ogg`, `stream-2.ogg`, `mutado.ogg`) — e dá para pôr quantos quiser no sorteio da stream, mexendo na lista no topo do `app.js`.
 
 ### O atraso (suavidade)
 
@@ -238,6 +340,8 @@ Duas coisas importantes: a escolha é **sua e só sua** — você define como qu
 **Se a voz não conectar para alguém.** Algumas redes (universidade, empresa, alguns provedores com CGNAT) bloqueiam conexão direta. O app já vem com um servidor TURN público de cortesia (Open Relay) que resolve a maioria desses casos, mas ele é compartilhado com o mundo inteiro e pode ficar lento. Se isso incomodar, crie uma conta grátis em [metered.ca](https://www.metered.ca/tools/openrelay/) ou suba um `coturn`, e troque a lista `ICE_SERVERS` no topo de `server/public/app.js`.
 
 **Consumo do servidor.** O plano grátis do Render dá 512 MB de RAM e 0,1 CPU. Este servidor usa cerca de **70 MB** parado e cresce pouquíssimo com gente na sala: ele só guarda nome e id de quem está online e repassa textinhos de sinalização. Voz e vídeo nem passam por ele. Os limites que realmente importam são a hibernação após 15 minutos e as 750 horas por mês — memória não é preocupação aqui.
+
+**A parte nativa.** O `desktop/app-audio.js` é o único lugar que toca a biblioteca nativa, e ele degrada sozinho: fora do Windows nem tenta carregar, e qualquer falha vira "opção indisponível" em vez de erro. Para depurar o caminho do áudio sem Windows, rode o app com `FALATORIO_FAKE_PCM=1` — a captura é substituída por um tom de 440 Hz no mesmo formato, e todo o resto (IPC, worklet, WebRTC) funciona igual.
 
 **Editando a interface.** Mexa sempre em `server/public/`. O `npm start` e o `npm run dist` do desktop copiam essa pasta para `desktop/renderer/` automaticamente — não edite `desktop/renderer/` direto, porque ela é sobrescrita.
 
@@ -271,7 +375,11 @@ Verificado com clientes reais (Chromium automatizado) rodando ao mesmo tempo, e 
 - **chat retrátil**: esconde e mostra pelo #geral, o espaço vai para as telas, o contador de não lidas aparece e zera, e a preferência sobrevive a recarregar a página;
 - os atalhos de teclado não disparam enquanto se digita no chat;
 - **no app Electron de verdade**: a captura pede `audio: true` e `systemAudio: include`; a tela cheia é da janela e não da API HTML; e as três saídas foram testadas uma a uma — Esc, perda de foco e fim da transmissão — verificando `isFullScreen()` do lado do processo principal, além de a janela nunca estar com "sempre por cima";
-- **sair da transmissão**: o quadro some, o som dela é cortado, as outras seguem normais, a barra oferece o retorno, e a aba fechada some sozinha quando a pessoa para de transmitir.
+- **modo Fiore**: vem desligado, o botão fica mesmo acima do Sair, cada acontecimento dispara o som certo (entrada, saída, stream e mudo, inclusive os seus próprios), os dois áudios de stream são sorteados de verdade, quem não ligou não ouve nada, e a escolha sobrevive ao recarregar; os cinco arquivos também foram conferidos decodificando no navegador;
+- **música sincronizada**, com o player real trocado por um simulado: os players carregam o mesmo vídeo, ficam a menos de 0,1s de distância um do outro, quem entra depois cai no ponto certo (e não no começo), pausar e pular valem para todos, e um player forçado a escorregar 17s voltou sozinho ao lugar na batida seguinte; a fila é zerada quando a sala esvazia;
+- **som por aplicativo, de ponta a ponta**: com a captura nativa substituída por um tom de 440 Hz no mesmo formato (PCM 16 bits, estéreo, 48 kHz), o áudio percorre IPC → AudioWorklet → WebRTC e **chega no outro participante medido a 441 Hz**, em canal separado da voz; a opção some quando o sistema não a suporta, e parar de compartilhar encerra a captura junto;
+- **sair da transmissão**: o quadro some, o som dela é cortado, as outras seguem normais, a barra oferece o retorno, e a aba fechada some sozinha quando a pessoa para de transmitir;
+- **webcam**: a conexão carrega mesmo **quatro canais** na ordem certa (voz, som da tela, tela, câmera), a imagem chega do outro lado com frames decodificados de verdade (não só um `<video>` na tela), tela e câmera da mesma pessoa convivem em quadros separados sem se embaralhar, ligar e desligar não muda o número de canais (nada renegocia), desligar a câmera não derruba a transmissão de tela, religar volta a mandar imagem, dá para esconder só a câmera de alguém e reabrir pela barra, e quem sai leva os dois quadros junto; no app Electron a permissão de câmera passa e a prévia sai espelhada em 1280x720.
 
 Também corrigi no caminho um defeito que só aparecia ao parar e recomeçar rápido: um evento atrasado de "faixa muda" derrubava o quadro da transmissão nova. Agora quem manda é o estado anunciado pela pessoa, e os eventos da faixa só pedem uma reavaliação.
 
@@ -310,4 +418,4 @@ Quem usa pelo navegador já pega a versão nova ao recarregar a página. Quem us
 
 ## Ideias para depois
 
-Se um dia quiserem crescer: múltiplos canais de voz e texto, histórico salvo em SQLite, sala protegida por senha, câmera além da tela, ou trocar a malha por um servidor SFU (mediasoup) para aguentar dezenas de pessoas. A base já está pronta para qualquer um desses caminhos.
+Se um dia quiserem crescer: múltiplos canais de voz e texto, histórico salvo em SQLite, desfoque de fundo na câmera, ou trocar a malha por um servidor SFU (mediasoup) para aguentar dezenas de pessoas. A base já está pronta para qualquer um desses caminhos.

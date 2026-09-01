@@ -37,6 +37,10 @@
   const LS_SOM = 'falatorio.som';
   const LS_SAIDA = 'falatorio.saida';
   const LS_CHAT = 'falatorio.chat';
+  const LS_FIORE = 'falatorio.fiore';
+  const LS_CAM = 'falatorio.camera';
+  const LS_MUSICA = 'falatorio.painelMusica';
+  const LS_VOL_MUSICA = 'falatorio.volumeMusica';
 
   // ── Elementos ────────────────────────────────────────────
   const $ = (id) => document.getElementById(id);
@@ -51,14 +55,24 @@
     micBtn: $('mic-btn'), micIcon: $('mic-icon'), micLabel: $('mic-label'),
     deafBtn: $('deaf-btn'), deafIcon: $('deaf-icon'), deafLabel: $('deaf-label'),
     shareBtn: $('share-btn'), shareLabel: $('share-label'), leaveBtn: $('leave-btn'),
+    camBtn: $('cam-btn'), camLabel: $('cam-label'),
+    camRow: $('cam-row'), camSelect: $('cam-select'),
+    fioreBtn: $('fiore-btn'), fioreLabel: $('fiore-label'),
     quality: $('quality-select'), buffer: $('buffer-select'),
     outputRow: $('output-row'), output: $('output-select'), viewBar: $('view-bar'),
     grid: $('grid'), stageEmpty: $('stage-empty'),
     messages: $('messages'), chatForm: $('chat-form'), chatInput: $('chat-input'),
     audioSink: $('audio-sink'),
+    musicBtn: $('music-btn'), musicBadge: $('music-badge'), musicChevron: $('music-chevron'),
+    musicPanel: $('music-panel'), musicClose: $('music-close'), musicFrame: $('music-frame'),
+    musicVazio: $('music-vazio'), musicNow: $('music-now'), musicTitle: $('music-title'),
+    musicSub: $('music-sub'), musicFill: $('music-fill'), musicPlay: $('music-play'),
+    musicNext: $('music-next'), musicTime: $('music-time'), musicVolume: $('music-volume'),
+    musicForm: $('music-form'), musicInput: $('music-input'), musicResults: $('music-results'),
+    musicQueue: $('music-queue'), musicCount: $('music-count'), musicClear: $('music-clear'),
     picker: $('picker'), pickerList: $('picker-list'), pickerCancel: $('picker-cancel'),
     pickerOk: $('picker-ok'), pickerTitle: $('picker-title'), pickerWarn: $('picker-warn'),
-    soundNote: $('sound-note'),
+    soundNote: $('sound-note'), optApp: $('opt-app'), appSelect: $('app-select'),
   };
 
   // ── Estado ───────────────────────────────────────────────
@@ -72,6 +86,9 @@
   let mutedAntesDeSurdo = false;
   let sharing = false;
   let sharingAudio = false;    // estou enviando o som da minha tela
+  let camStream = null;        // MediaStream da webcam (quando ligada)
+  let camAtiva = false;        // estou enviando a minha câmera
+  let camId = localStorage.getItem(LS_CAM) || '';  // qual câmera usar
   let quality = localStorage.getItem(LS_QUALITY) || 'media';
   let bufferMs = Number(localStorage.getItem(LS_BUFFER) ?? 500);
   let viewing = 'todos';       // 'todos' ou o id de quem eu quero assistir
@@ -85,7 +102,7 @@
   const peers = new Map();
 
   const sendState = () => socket
-    && socket.emit('state', { muted, deafened, sharing, sharingAudio });
+    && socket.emit('state', { muted, deafened, sharing, sharingAudio, camera: camAtiva });
 
   // ── Utilidades ───────────────────────────────────────────
   const escapeHtml = (s) => s.replace(/[&<>"']/g, (c) =>
@@ -215,6 +232,9 @@
     el.connDot.classList.add('on');
     renderPeers();
     aplicarLayout();
+    aplicarFiore();
+    abrirPainelDeMusica(musica.painelAberto);
+    tocarFiore('entrar'); // a sua própria chegada também é anunciada
     listarSaidas().catch(() => {});
     systemMessage(`Você entrou como ${name}.`);
     el.chatInput.focus();
@@ -243,13 +263,16 @@
       });
     });
 
-    socket.on('peer-joined', (p) => { addPeer(p); renderPeers(); });
+    socket.on('peer-joined', (p) => { addPeer(p); renderPeers(); tocarFiore('entrar'); });
 
-    socket.on('peer-left', ({ id }) => { removePeer(id); renderPeers(); });
+    socket.on('peer-left', ({ id }) => { removePeer(id); renderPeers(); tocarFiore('sair'); });
 
     socket.on('peer-state', (p) => {
       const peer = peers.get(p.id);
       if (!peer) return;
+      // Efeitos do modo Fiore nas viradas: começou a transmitir, ficou mudo.
+      if (!peer.sharing && p.sharing) tocarFiore('stream');
+      if (!peer.muted && p.muted) tocarFiore('mutado');
       peer.muted = p.muted;
       peer.deafened = p.deafened;
       // Quem parou de compartilhar zera o "fechei essa": a próxima
@@ -257,13 +280,42 @@
       if (peer.sharing && !p.sharing) peer.fechada = false;
       peer.sharing = p.sharing;
       peer.sharingAudio = p.sharingAudio;
+      // Idem para a câmera: desligou, some o "fechei essa".
+      if (peer.camera && !p.camera) peer.camFechada = false;
+      peer.camera = p.camera;
       syncTile(peer);
+      syncCamTile(peer);
       renderPeers();
     });
 
     socket.on('chat', (m) => appendMessage(m));
     socket.on('system', (text) => systemMessage(text));
     socket.on('signal', onSignal);
+
+    socket.on('musica:estado', (estado) => {
+      const trocou = !musica.estado.atual || !estado.atual
+        || musica.estado.atual.videoId !== estado.atual.videoId;
+      musica.estado = estado;
+      musica.posicaoLocal = estado.posicao;
+      aplicarMusica();
+      if (trocou && estado.atual && !musica.painelAberto) {
+        musica.naoVistas += 1;
+        el.musicBadge.textContent = String(musica.naoVistas);
+        el.musicBadge.hidden = false;
+      }
+    });
+
+    // Correção de defasagem: se o player local escorregou mais de 1,5s do
+    // que o servidor diz, ele volta para o lugar certo.
+    socket.on('musica:tique', ({ videoId, posicao }) => {
+      musica.estado.posicao = posicao;
+      if (!musica.playerPronto || musica.videoCarregado !== videoId) return;
+      const fora = Math.abs(musica.posicaoLocal - posicao);
+      if (fora > 1.5) {
+        log(`música fora de sincronia por ${fora.toFixed(1)}s — corrigindo`);
+        aoPlayer({ tipo: 'seek', posicao });
+      }
+    });
   }
 
   // Toda a sinalização de um par passa por esta fila. Sem isso, uma oferta
@@ -299,7 +351,9 @@
       settingRemoteAnswer: false,
       videoTransceiver: null,
       screenAudioTransceiver: null,
+      camTransceiver: null,
       videoStream: null,
+      camStream: null,
       audioEl: null,          // voz da pessoa
       screenAudioEl: null,    // som da tela que ela compartilha
       volume: 1,
@@ -307,8 +361,9 @@
     };
     peers.set(info.id, peer);
 
-    // Ordem importa: canal 1 = voz, canal 2 = som da tela, canal 3 = imagem.
-    // Os dois lados montam na mesma ordem, então as m-lines batem certinho.
+    // Ordem importa: canal 1 = voz, canal 2 = som da tela, canal 3 = tela,
+    // canal 4 = câmera. Os dois lados montam na mesma ordem, então as
+    // m-lines batem certinho.
     micStream.getAudioTracks().forEach((t) => pc.addTrack(t, micStream));
 
     // Quem oferece cria os espaços; quem responde adota os que vêm na oferta
@@ -316,6 +371,7 @@
     if (peer.offerer) {
       peer.screenAudioTransceiver = pc.addTransceiver('audio', { direction: 'sendrecv' });
       peer.videoTransceiver = pc.addTransceiver('video', { direction: 'sendrecv' });
+      peer.camTransceiver = pc.addTransceiver('video', { direction: 'sendrecv' });
       applyShareTo(peer);
       applyBufferTo(peer);
     }
@@ -364,15 +420,28 @@
       const stream = ev.streams[0] || new MediaStream([track]);
 
       if (track.kind === 'video') {
-        // A faixa de vídeo chega logo na conexão e fica em silêncio até a
-        // pessoa compartilhar; o quadro só aparece quando ela compartilha.
-        peer.videoStream = stream;
+        // Dois canais de vídeo chegam, na mesma ordem dos dois lados:
+        // o primeiro é a tela compartilhada, o segundo é a câmera.
+        const canaisDeVideo = pc.getTransceivers()
+          .filter((t) => t.receiver && t.receiver.track && t.receiver.track.kind === 'video');
+        const ehCamera = canaisDeVideo.indexOf(ev.transceiver) === 1;
+
+        // A faixa chega logo na conexão e fica em silêncio até a pessoa
+        // ligar aquilo; o quadro só aparece quando ela liga.
         // Os eventos de mute/unmute da faixa só pedem uma reavaliação: quem
         // manda é o estado anunciado pela pessoa. Um "mute" atrasado do
         // compartilhamento anterior não pode derrubar o quadro do novo.
-        track.addEventListener('unmute', () => syncTile(peer));
-        track.addEventListener('mute', () => syncTile(peer));
-        syncTile(peer);
+        if (ehCamera) {
+          peer.camStream = stream;
+          track.addEventListener('unmute', () => syncCamTile(peer));
+          track.addEventListener('mute', () => syncCamTile(peer));
+          syncCamTile(peer);
+        } else {
+          peer.videoStream = stream;
+          track.addEventListener('unmute', () => syncTile(peer));
+          track.addEventListener('mute', () => syncTile(peer));
+          syncTile(peer);
+        }
         return;
       }
 
@@ -420,15 +489,25 @@
     const audios = ts.filter((t) => t.receiver && t.receiver.track && t.receiver.track.kind === 'audio');
     const videos = ts.filter((t) => t.receiver && t.receiver.track && t.receiver.track.kind === 'video');
 
-    if (videos[0]) peer.videoTransceiver = videos[0];
+    if (videos[0]) peer.videoTransceiver = videos[0];  // tela
+    if (videos[1]) peer.camTransceiver = videos[1];    // câmera
     if (audios[1]) peer.screenAudioTransceiver = audios[1]; // audios[0] = voz
 
-    [peer.videoTransceiver, peer.screenAudioTransceiver].forEach((t) => {
+    [peer.videoTransceiver, peer.camTransceiver, peer.screenAudioTransceiver].forEach((t) => {
       if (t && t.direction !== 'sendrecv') t.direction = 'sendrecv';
     });
 
     applyShareTo(peer);
     applyBufferTo(peer);
+  }
+
+  /**
+   * O som que acompanha a transmissão pode vir de dois lugares: da captura de
+   * tela (mistura do sistema) ou da captura nativa de um aplicativo só.
+   */
+  function faixaDeSomDaTransmissao() {
+    if (audioDeApp && audioDeApp.track && audioDeApp.track.readyState === 'live') return audioDeApp.track;
+    return screenStream ? screenStream.getAudioTracks()[0] || null : null;
   }
 
   /** Deixa o que estamos (ou não) compartilhando refletido neste par. */
@@ -442,11 +521,29 @@
     };
 
     const video = sharing && screenStream ? screenStream.getVideoTracks()[0] || null : null;
-    const som = sharing && screenStream ? screenStream.getAudioTracks()[0] || null : null;
+    const som = sharing ? faixaDeSomDaTransmissao() : null;
+    const cam = camAtiva && camStream ? camStream.getVideoTracks()[0] || null : null;
 
     const mudouVideo = trocar(peer.videoTransceiver, video);
     trocar(peer.screenAudioTransceiver, som);
+    const mudouCam = trocar(peer.camTransceiver, cam);
     if (mudouVideo && video) applyQuality();
+    if (mudouCam && cam) limitarCamera(peer);
+  }
+
+  /**
+   * A câmera tem banda própria, bem menor que a da tela: mesmo em "Alta",
+   * um rostinho em 720p não precisa roubar espaço da transmissão do jogo.
+   */
+  function limitarCamera(peer) {
+    const sender = peer.camTransceiver && peer.camTransceiver.sender;
+    if (!sender) return;
+    const params = sender.getParameters();
+    if (!params.encodings || !params.encodings.length) params.encodings = [{}];
+    params.encodings[0].maxBitrate = 1.2e6;
+    params.encodings[0].maxFramerate = 30;
+    params.degradationPreference = 'balanced';
+    sender.setParameters(params).catch((err) => log('setParameters câmera', err.message));
   }
 
   /**
@@ -455,6 +552,8 @@
    * A voz fica de fora de propósito — conversa precisa ser em tempo real.
    */
   function applyBufferTo(peer) {
+    // A câmera fica de fora junto com a voz: rosto e voz precisam andar
+    // no mesmo passo, senão a boca descola do som.
     [peer.videoTransceiver, peer.screenAudioTransceiver].forEach((t) => {
       if (!t || !t.receiver) return;
       try {
@@ -475,6 +574,22 @@
       removeTile(peer.id);
     }
   }
+
+  /** O mesmo para a câmera: quadro à parte, do lado da tela dela. */
+  function syncCamTile(peer) {
+    const id = idDaCamera(peer.id);
+    if (peer.camera && peer.camStream && !peer.camFechada) {
+      addTile(id, `${peer.name} — câmera`, peer.camStream, { tipo: 'camera' });
+    } else {
+      removeTile(id);
+    }
+  }
+
+  // Os quadros de câmera dividem a mesma grade dos de tela; o prefixo
+  // "cam:" mantém os dois de uma pessoa como quadros separados.
+  const idDaCamera = (id) => `cam:${id}`;
+  const ehIdDeCamera = (id) => String(id).startsWith('cam:');
+  const idBase = (id) => String(id).replace(/^cam:/, '');
 
   function onSignal({ from, description, candidate }) {
     const peer = peers.get(from);
@@ -525,10 +640,15 @@
     if (peer.audioEl) peer.audioEl.remove();
     if (peer.screenAudioEl) peer.screenAudioEl.remove();
     removeTile(id);
+    removeTile(idDaCamera(id));
     peers.delete(id);
   }
 
-  const peerName = (id) => (id === myId ? `${myName} (você)` : (peers.get(id)?.name || 'Alguém'));
+  function peerName(id) {
+    const base = idBase(id);
+    const nome = base === myId ? `${myName} (você)` : (peers.get(base)?.name || 'Alguém');
+    return ehIdDeCamera(id) ? `${nome} 📷` : nome;
+  }
 
   // ── Microfone ────────────────────────────────────────────
   function setMuted(value) {
@@ -541,6 +661,7 @@
 
   el.micBtn.addEventListener('click', () => {
     setMuted(!muted);
+    if (muted) tocarFiore('mutado');            // o seu mudo também conta
     if (!muted && deafened) setDeafened(false); // falar de novo tira o surdo
     sendState();
     renderPeers();
@@ -607,7 +728,8 @@
     const escolha = await abrirDialogo();
     if (!escolha) return;
     localStorage.setItem(LS_SOM, escolha.som);
-    const querSom = escolha.som === 'sistema';
+    const querSom = escolha.som === 'sistema';   // mistura do sistema, na captura de tela
+    const querSomDoApp = escolha.som === 'app';  // captura nativa de um programa só
 
     // No app, a escolha da janela é entregue ao processo principal. Precisa
     // ser refeita a cada tentativa: ela é consumida assim que a captura pede.
@@ -648,7 +770,14 @@
     const track = screenStream.getVideoTracks()[0];
     track.addEventListener('ended', () => stopShare());
 
-    const somDaTela = screenStream.getAudioTracks()[0] || null;
+    // Som de um aplicativo só: captura nativa, à parte da captura de tela.
+    let erroDoApp = '';
+    if (querSomDoApp && escolha.app) {
+      const r = await iniciarSomDoApp(escolha.app);
+      if (!r.ok) erroDoApp = r.erro;
+    }
+
+    const somDaTela = faixaDeSomDaTransmissao();
     sharingAudio = !!somDaTela;
     if (somDaTela) somDaTela.addEventListener('ended', () => { sharingAudio = false; sendState(); });
 
@@ -663,8 +792,13 @@
     addTile(myId, `${myName} (você)`, screenStream, { isLocal: true });
     sendState();
     renderPeers();
+    tocarFiore('stream');
 
-    if (querSom && !somDaTela) explicarFaltaDeSom(track);
+    if (querSomDoApp) {
+      if (erroDoApp) systemMessage(`Compartilhando sem som: ${erroDoApp}`);
+      else if (somDaTela) systemMessage(`Compartilhando com o som de ${audioDeApp.nome} — só desse programa, sem as vozes da chamada.`);
+      else systemMessage('Compartilhando sem som: a captura do aplicativo não entregou áudio.');
+    } else if (querSom && !somDaTela) explicarFaltaDeSom(track);
     else if (querSom && somDaTela) {
       systemMessage('Compartilhando com o som do computador. Lembre: sai a mistura inteira da máquina, inclusive as vozes da chamada.');
     }
@@ -699,6 +833,7 @@
     if (!sharing) return;
     sharing = false;
     sharingAudio = false;
+    pararSomDoApp();
     peers.forEach(applyShareTo);
     if (screenStream) screenStream.getTracks().forEach((t) => t.stop());
     screenStream = null;
@@ -707,6 +842,213 @@
     removeTile(myId);
     sendState();
     renderPeers();
+  }
+
+  // ── Webcam ───────────────────────────────────────────────
+  //
+  // A câmera vai pelo quarto canal, que já nasce reservado na conexão. Ligar
+  // e desligar é só trocar a faixa: ninguém renegocia nada, e quem está
+  // assistindo a uma tela não perde o quadro por causa disso.
+  el.camBtn.addEventListener('click', () => (camAtiva ? desligarCamera() : ligarCamera()));
+
+  async function ligarCamera() {
+    if (camAtiva) return;
+    try {
+      camStream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          ...(camId ? { deviceId: { exact: camId } } : {}),
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { ideal: 30, max: 30 },
+        },
+      });
+    } catch (err) {
+      // A câmera escolhida pode ter sido desconectada: tenta a padrão.
+      if (camId) {
+        camId = '';
+        localStorage.removeItem(LS_CAM);
+        return ligarCamera();
+      }
+      systemMessage(err && err.name === 'NotAllowedError'
+        ? 'Não deu para ligar a câmera: falta permissão. Libere o acesso à câmera e tente de novo.'
+        : `Não deu para ligar a câmera: ${err.message}`);
+      return;
+    }
+
+    const track = camStream.getVideoTracks()[0];
+    if (!track) { camStream = null; systemMessage('Nenhuma câmera encontrada.'); return; }
+    track.contentHint = 'motion';
+    track.addEventListener('ended', () => desligarCamera());
+    // Lembra qual câmera deu certo, para a próxima vez.
+    const usada = track.getSettings && track.getSettings().deviceId;
+    if (usada) { camId = usada; localStorage.setItem(LS_CAM, usada); }
+
+    camAtiva = true;
+    camFechadaLocal = false;
+    peers.forEach(applyShareTo);
+    peers.forEach(limitarCamera);
+
+    el.camBtn.classList.add('active');
+    el.camLabel.textContent = 'Desligar câmera';
+    addTile(idDaCamera(myId), `${myName} (você) — câmera`, camStream, { tipo: 'camera', isLocal: true });
+    sendState();
+    renderPeers();
+    listarCameras().catch(() => {});
+  }
+
+  function desligarCamera() {
+    if (!camAtiva) return;
+    camAtiva = false;
+    peers.forEach(applyShareTo);
+    if (camStream) camStream.getTracks().forEach((t) => t.stop());
+    camStream = null;
+    el.camBtn.classList.remove('active');
+    el.camLabel.textContent = 'Ligar câmera';
+    removeTile(idDaCamera(myId));
+    sendState();
+    renderPeers();
+  }
+
+  /** Só mostra o seletor quando existe mais de uma câmera para escolher. */
+  async function listarCameras() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+    const todas = (await navigator.mediaDevices.enumerateDevices())
+      .filter((d) => d.kind === 'videoinput');
+    el.camRow.hidden = todas.length < 2;
+    if (todas.length < 2) return;
+
+    el.camSelect.innerHTML = '';
+    todas.forEach((d, i) => {
+      const opt = document.createElement('option');
+      opt.value = d.deviceId;
+      opt.textContent = d.label || `Câmera ${i + 1}`;
+      if (d.deviceId === camId) opt.selected = true;
+      el.camSelect.appendChild(opt);
+    });
+  }
+
+  el.camSelect.addEventListener('change', async () => {
+    camId = el.camSelect.value;
+    localStorage.setItem(LS_CAM, camId);
+    if (!camAtiva) return;
+    // Troca a câmera sem piscar o botão: desliga a faixa antiga e liga a nova.
+    const antiga = camStream;
+    camAtiva = false;
+    await ligarCamera();
+    if (antiga) antiga.getTracks().forEach((t) => t.stop());
+  });
+
+  if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+    navigator.mediaDevices.addEventListener('devicechange', () => {
+      listarCameras().catch(() => {});
+    });
+  }
+
+  // ── Som de um aplicativo só (Windows, via app desktop) ───
+  //
+  // O áudio bruto chega do processo principal em pedaços de PCM. Aqui ele
+  // entra num AudioWorklet, que o transforma numa faixa de mídia igual a
+  // qualquer outra — e essa faixa vai pelo canal de som da transmissão que
+  // já existe na conexão, sem renegociar nada.
+  const CODIGO_DO_WORKLET = `
+    class FilaDePCM extends AudioWorkletProcessor {
+      constructor() {
+        super();
+        this.fila = [];
+        this.quadrosNaFila = 0;
+        this.maximo = sampleRate * 0.4; // 400 ms: além disso, atraso demais
+        this.port.onmessage = (e) => {
+          const amostras = e.data;             // Int16Array intercalado
+          const quadros = amostras.length / 2;
+          const esq = new Float32Array(quadros);
+          const dir = new Float32Array(quadros);
+          for (let i = 0; i < quadros; i++) {
+            esq[i] = amostras[i * 2] / 32768;
+            dir[i] = amostras[i * 2 + 1] / 32768;
+          }
+          this.fila.push([esq, dir, 0]);
+          this.quadrosNaFila += quadros;
+          while (this.quadrosNaFila > this.maximo && this.fila.length > 1) {
+            const [e0] = this.fila.shift();
+            this.quadrosNaFila -= e0.length;
+          }
+        };
+      }
+      process(_entradas, saidas) {
+        const saida = saidas[0];
+        const esqOut = saida[0];
+        const dirOut = saida[1] || saida[0];
+        let escrito = 0;
+        while (escrito < esqOut.length && this.fila.length) {
+          const item = this.fila[0];
+          const [esq, dir] = item;
+          let pos = item[2];
+          const copiar = Math.min(esqOut.length - escrito, esq.length - pos);
+          for (let i = 0; i < copiar; i++) {
+            esqOut[escrito + i] = esq[pos + i];
+            dirOut[escrito + i] = dir[pos + i];
+          }
+          escrito += copiar;
+          pos += copiar;
+          this.quadrosNaFila -= copiar;
+          if (pos >= esq.length) this.fila.shift(); else item[2] = pos;
+        }
+        for (let i = escrito; i < esqOut.length; i++) { esqOut[i] = 0; dirOut[i] = 0; }
+        return true;
+      }
+    }
+    registerProcessor('fila-de-pcm', FilaDePCM);
+  `;
+
+  let audioDeApp = null; // { ctx, node, stream, track, pid, nome }
+
+  async function iniciarSomDoApp(app) {
+    const status = await desktop.appAudio.status();
+    if (!status.disponivel) return { ok: false, erro: status.motivo };
+
+    const resposta = await desktop.appAudio.iniciar(app.pid);
+    if (!resposta || !resposta.ok) return { ok: false, erro: (resposta && resposta.erro) || 'falha desconhecida' };
+
+    const ctx = new AudioContext({ sampleRate: status.formato.taxa });
+    const blob = new Blob([CODIGO_DO_WORKLET], { type: 'application/javascript' });
+    const url = URL.createObjectURL(blob);
+    try {
+      await ctx.audioWorklet.addModule(url);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+
+    const node = new AudioWorkletNode(ctx, 'fila-de-pcm', { outputChannelCount: [2] });
+    const destino = ctx.createMediaStreamDestination();
+    node.connect(destino);
+    await ctx.resume().catch(() => {});
+
+    desktop.appAudio.aoReceber((chunk) => {
+      // Chega como bytes; viram amostras de 16 bits sem cópia extra.
+      const bytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+      const amostras = new Int16Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+      node.port.postMessage(amostras, [amostras.buffer]);
+    });
+
+    audioDeApp = {
+      ctx,
+      node,
+      stream: destino.stream,
+      track: destino.stream.getAudioTracks()[0],
+      pid: app.pid,
+      nome: app.titulo || app.nome,
+    };
+    return { ok: true };
+  }
+
+  function pararSomDoApp() {
+    if (!audioDeApp) return;
+    try { audioDeApp.track.stop(); } catch { /* já parada */ }
+    try { audioDeApp.node.disconnect(); } catch { /* já solta */ }
+    audioDeApp.ctx.close().catch(() => {});
+    audioDeApp = null;
+    if (desktop && desktop.appAudio) desktop.appAudio.parar().catch(() => {});
   }
 
   // ── Qualidade do compartilhamento ────────────────────────
@@ -818,6 +1160,38 @@
    */
   async function abrirDialogo() {
     let fonte = null;
+    let nomeDaFonte = '';
+
+    // Lista de programas para o som por aplicativo (só o app desktop tem).
+    let apps = [];
+    let podeSomDeApp = false;
+    if (desktop && desktop.appAudio) {
+      try {
+        const status = await desktop.appAudio.status();
+        podeSomDeApp = !!status.disponivel;
+        if (podeSomDeApp) apps = await desktop.appAudio.listar();
+      } catch (err) {
+        log('som por aplicativo indisponível', err.message);
+      }
+    }
+    el.optApp.hidden = !podeSomDeApp || apps.length === 0;
+
+    /** Pré-seleciona o programa cuja janela é a que está sendo compartilhada. */
+    const casarComAJanela = () => {
+      if (!apps.length || !nomeDaFonte) return;
+      const igual = apps.find((a) => a.titulo === nomeDaFonte)
+        || apps.find((a) => nomeDaFonte && a.titulo.includes(nomeDaFonte))
+        || apps.find((a) => nomeDaFonte.includes(a.titulo));
+      if (igual) el.appSelect.value = String(igual.pid);
+    };
+
+    el.appSelect.innerHTML = '';
+    apps.forEach((a) => {
+      const opt = document.createElement('option');
+      opt.value = String(a.pid);
+      opt.textContent = a.titulo === a.nome ? a.titulo : `${a.titulo} — ${a.nome}`;
+      el.appSelect.appendChild(opt);
+    });
 
     el.pickerList.innerHTML = '';
     if (desktop) {
@@ -830,11 +1204,15 @@
         btn.innerHTML = `<img src="${s.thumbnail}" alt="" /><span>${escapeHtml(s.name)}</span>`;
         btn.addEventListener('click', () => {
           fonte = s.id;
+          nomeDaFonte = s.name;
+          casarComAJanela();
           [...el.pickerList.children].forEach((c) => c.classList.toggle('on', c === btn));
         });
         el.pickerList.appendChild(btn);
       });
       fonte = fontes.length ? fontes[0].id : null;
+      nomeDaFonte = fontes.length ? fontes[0].name : '';
+      casarComAJanela();
       el.pickerList.hidden = false;
     } else {
       el.pickerTitle.textContent = 'Compartilhar tela';
@@ -849,15 +1227,28 @@
 
     el.pickerWarn.textContent = 'O computador não sabe separar o som de um programa só: o que vai é a mistura inteira da saída de áudio — inclusive as vozes desta chamada, que voltam como eco para os outros. Para mandar só o som do jogo, escolha na barra lateral ouvir a chamada em outro aparelho (um fone), deixando o jogo na saída principal.';
 
-    const radios = [...document.querySelectorAll('input[name="share-sound"]')];
-    const salvo = localStorage.getItem(LS_SOM) || 'nenhum';
+    // Só as opções realmente oferecidas. Cuidado: aqui o próprio diálogo
+    // ainda está escondido, então a checagem tem que ser da opção em si.
+    const radios = [...document.querySelectorAll('input[name="share-sound"]')]
+      .filter((r) => {
+        const opcao = r.closest('.sound-opt');
+        return !opcao || !opcao.hidden;
+      });
+    let salvo = localStorage.getItem(LS_SOM) || 'nenhum';
+    if (!radios.some((r) => r.value === salvo)) salvo = 'nenhum';
     radios.forEach((r) => { r.checked = r.value === salvo; });
 
     const atualizarAviso = () => {
       const escolhido = radios.find((r) => r.checked);
       el.pickerWarn.hidden = !escolhido || escolhido.value !== 'sistema';
+      el.appSelect.disabled = !escolhido || escolhido.value !== 'app';
     };
     radios.forEach((r) => r.addEventListener('change', atualizarAviso));
+    // Mexer no seletor de aplicativo já escolhe aquela opção de som.
+    el.appSelect.addEventListener('focus', () => {
+      const opcao = radios.find((r) => r.value === 'app');
+      if (opcao && !opcao.checked) { opcao.checked = true; atualizarAviso(); }
+    });
     atualizarAviso();
 
     return new Promise((resolve) => {
@@ -870,7 +1261,11 @@
       };
       const ok = () => {
         const escolhido = radios.find((r) => r.checked);
-        fechar({ fonte, som: escolhido ? escolhido.value : 'nenhum' });
+        const som = escolhido ? escolhido.value : 'nenhum';
+        const app = som === 'app'
+          ? apps.find((a) => String(a.pid) === el.appSelect.value) || apps[0]
+          : null;
+        fechar({ fonte, som, app });
       };
       const cancelar = () => fechar(null);
       const tecla = (e) => {
@@ -887,25 +1282,36 @@
   }
 
   // ── Grade de telas ───────────────────────────────────────
-  function addTile(id, label, stream, { isLocal = false, peer = null } = {}) {
+  function addTile(id, label, stream, { isLocal = false, peer = null, tipo = 'tela' } = {}) {
     const existente = el.grid.querySelector(`.tile[data-peer="${CSS.escape(String(id))}"]`);
-    if (existente) return; // já está na tela; nada a refazer
+    if (existente) {
+      // Já está na tela. Só a fonte pode ter mudado (trocar de câmera, por
+      // exemplo) — nesse caso basta reapontar o vídeo, sem refazer o quadro.
+      const v = existente.querySelector('video');
+      if (v && v.srcObject !== stream) { v.srcObject = stream; v.play().catch(() => {}); }
+      return;
+    }
 
+    const ehCamera = tipo === 'camera';
     const tile = document.createElement('div');
-    tile.className = 'tile';
+    tile.className = 'tile' + (ehCamera ? ' camera' : '');
     tile.dataset.peer = id;
-    tile.title = 'Clique para ver só esta tela';
+    tile.dataset.tipo = tipo;
+    tile.title = ehCamera ? 'Clique para ver só esta câmera' : 'Clique para ver só esta tela';
 
     const video = document.createElement('video');
     video.autoplay = true;
     video.playsInline = true;
     video.muted = true; // o áudio vem pelos elementos <audio>
     video.srcObject = stream;
+    // A sua própria câmera aparece espelhada, como num espelho de verdade —
+    // é o que todo mundo espera ao se ver na tela.
+    if (ehCamera && isLocal) video.classList.add('espelhado');
     video.play().catch(() => {});
 
     const tag = document.createElement('div');
     tag.className = 'tile-label';
-    tag.textContent = isLocal ? `${label} — compartilhando` : label;
+    tag.textContent = isLocal && !ehCamera ? `${label} — compartilhando` : label;
 
     const hint = document.createElement('div');
     hint.className = 'tile-hint';
@@ -932,7 +1338,9 @@
     btnFechar.type = 'button';
     btnFechar.className = 'close';
     btnFechar.textContent = '✕';
-    btnFechar.title = isLocal ? 'Esconder a sua prévia' : 'Sair desta transmissão (parar de assistir)';
+    btnFechar.title = isLocal
+      ? 'Esconder a sua prévia'
+      : (ehCamera ? 'Esconder esta câmera' : 'Sair desta transmissão (parar de assistir)');
     btnFechar.addEventListener('click', (e) => { e.stopPropagation(); fecharTransmissao(id); });
 
     tools.append(btnMax, btnFull, btnFechar);
@@ -1014,6 +1422,277 @@
     // Se a transmissão maximizada acabou, o layout volta ao normal sozinho.
     if (maximizado === id) { maximizado = null; aplicarLayout(); }
     applyView();
+  }
+
+  // ── Modo Fiore: efeitos sonoros nos acontecimentos ───────
+  //
+  // Tudo local: cada pessoa liga ou desliga para si, e nada disso trafega
+  // pela chamada — o som toca no alto-falante de quem ativou.
+  const SONS_FIORE = {
+    entrar: ['sons/entrar.ogg'],
+    sair: ['sons/sair.mp3'],
+    stream: ['sons/stream-1.ogg', 'sons/stream-2.ogg'],
+    mutado: ['sons/mutado.ogg'],
+  };
+
+  const fiore = {
+    ligado: localStorage.getItem(LS_FIORE) === 'sim',
+    audios: {},          // evento -> [Audio]
+    ultimoDe: {},        // evento -> instante
+    ultimoQualquer: 0,
+  };
+
+  function prepararSonsFiore() {
+    if (Object.keys(fiore.audios).length) return;
+    const base = (localStorage.getItem(LS_SERVER) || location.origin).replace(/\/$/, '');
+    Object.entries(SONS_FIORE).forEach(([evento, arquivos]) => {
+      fiore.audios[evento] = arquivos.map((nome) => {
+        const a = new Audio(`${base}/${nome}`);
+        a.preload = 'auto';
+        a.volume = 0.75;
+        rotearPlayer(a); // sai pelo mesmo aparelho escolhido para a chamada
+        return a;
+      });
+    });
+  }
+
+  /**
+   * Toca o efeito do acontecimento. Os freios existem porque em bagunça
+   * (todo mundo entrando junto, alguém batendo no mudo) isso viraria uma
+   * salada de áudio.
+   */
+  function tocarFiore(evento) {
+    if (!fiore.ligado || deafened) return;
+    const agora = Date.now();
+    if (agora - fiore.ultimoQualquer < 700) return;          // um de cada vez
+    if (agora - (fiore.ultimoDe[evento] || 0) < 2500) return; // sem repetir na hora
+    const opcoes = fiore.audios[evento];
+    if (!opcoes || !opcoes.length) return;
+
+    fiore.ultimoQualquer = agora;
+    fiore.ultimoDe[evento] = agora;
+
+    const som = opcoes[Math.floor(Math.random() * opcoes.length)];
+    try { som.currentTime = 0; } catch { /* ainda carregando */ }
+    som.play().catch((err) => log('som do fiore não tocou:', err.message));
+  }
+
+  function aplicarFiore() {
+    el.fioreBtn.classList.toggle('active', fiore.ligado);
+    el.fioreLabel.textContent = fiore.ligado ? 'Modo Fiore ligado' : 'Modo Fiore';
+    if (fiore.ligado) prepararSonsFiore();
+  }
+
+  el.fioreBtn.addEventListener('click', () => {
+    fiore.ligado = !fiore.ligado;
+    localStorage.setItem(LS_FIORE, fiore.ligado ? 'sim' : 'nao');
+    aplicarFiore();
+    systemMessage(fiore.ligado
+      ? 'Modo Fiore ligado — só você ouve os efeitos.'
+      : 'Modo Fiore desligado.');
+    if (fiore.ligado) tocarFiore('entrar'); // amostra na hora de ligar
+  });
+
+  // ── Música: fila compartilhada, tocada em sincronia ──────
+  //
+  // O servidor não toca nada: ele guarda o que está tocando e em que segundo.
+  // Cada pessoa reproduz o mesmo trecho no player oficial do YouTube, que
+  // vive num quadro à parte (player.html) servido pelo próprio servidor —
+  // é o que permite o app desktop embutir o player.
+  const musica = {
+    estado: { atual: null, fila: [], pausado: false, posicao: 0 },
+    painelAberto: localStorage.getItem(LS_MUSICA) === 'sim',
+    playerPronto: false,
+    videoCarregado: null,
+    posicaoLocal: 0,
+    naoVistas: 0,
+    volume: Number(localStorage.getItem(LS_VOL_MUSICA) ?? 60) / 100,
+  };
+
+  const tempoBonito = (s) => {
+    const seg = Math.max(0, Math.floor(s || 0));
+    return `${Math.floor(seg / 60)}:${String(seg % 60).padStart(2, '0')}`;
+  };
+
+  function aoPlayer(msg) {
+    if (!el.musicFrame.contentWindow) return;
+    el.musicFrame.contentWindow.postMessage({ falatorio: true, ...msg }, '*');
+  }
+
+  function abrirPainelDeMusica(abrir) {
+    musica.painelAberto = abrir;
+    localStorage.setItem(LS_MUSICA, abrir ? 'sim' : 'nao');
+    el.musicPanel.hidden = !abrir;
+    el.app.classList.toggle('com-musica', abrir);
+    el.musicChevron.style.transform = abrir ? '' : 'rotate(-90deg)';
+    if (abrir) {
+      musica.naoVistas = 0;
+      el.musicBadge.hidden = true;
+      garantirPlayer();
+    }
+  }
+
+  /** O quadro do player só é criado quando alguém abre a música. */
+  function garantirPlayer() {
+    if (el.musicFrame.src) return;
+    const base = (localStorage.getItem(LS_SERVER) || location.origin).replace(/\/$/, '');
+    const url = new URL(`${base}/player.html`);
+    if (DEBUG) url.searchParams.set('debug', '1');
+    // O modo de teste do app vale também para o quadro do player.
+    if (/[?&]teste=1/.test(location.search)) url.searchParams.set('teste', '1');
+    el.musicFrame.src = url.toString();
+    el.musicFrame.hidden = false;
+  }
+
+  el.musicBtn.addEventListener('click', () => abrirPainelDeMusica(!musica.painelAberto));
+  el.musicClose.addEventListener('click', () => abrirPainelDeMusica(false));
+
+  // Mensagens vindas do quadro do player
+  window.addEventListener('message', (ev) => {
+    const msg = ev.data;
+    if (!msg || !msg.falatorio || ev.source !== el.musicFrame.contentWindow) return;
+
+    if (msg.tipo === 'pronto') {
+      musica.playerPronto = true;
+      aoPlayer({ tipo: 'volume', valor: musica.volume });
+      aplicarMusica(true);
+    } else if (msg.tipo === 'tempo') {
+      musica.posicaoLocal = msg.posicao;
+      atualizarBarraDeMusica();
+    } else if (msg.tipo === 'fim') {
+      if (socket) socket.emit('musica:fim', msg.videoId);
+    } else if (msg.tipo === 'erro') {
+      log('player:', msg.codigo, msg.detalhe || '');
+      if (msg.codigo === 101 || msg.codigo === 150) {
+        systemMessage('Esse vídeo não pode tocar fora do YouTube — pulando.');
+        if (socket) socket.emit('musica:pular');
+      }
+    }
+  });
+
+  /** Põe o player local no mesmo ponto que o servidor manda. */
+  function aplicarMusica(forcar = false) {
+    const e = musica.estado;
+    desenharMusica();
+
+    if (!musica.playerPronto) return;
+
+    if (!e.atual) {
+      if (musica.videoCarregado) { aoPlayer({ tipo: 'parar' }); musica.videoCarregado = null; }
+      return;
+    }
+
+    if (musica.videoCarregado !== e.atual.videoId || forcar) {
+      musica.videoCarregado = e.atual.videoId;
+      aoPlayer({ tipo: 'carregar', videoId: e.atual.videoId, posicao: e.posicao });
+      if (e.pausado) aoPlayer({ tipo: 'pausar' });
+      return;
+    }
+
+    aoPlayer({ tipo: e.pausado ? 'pausar' : 'tocar' });
+  }
+
+  function atualizarBarraDeMusica() {
+    const e = musica.estado;
+    if (!e.atual) return;
+    const dur = e.atual.duracao || 0;
+    el.musicTime.textContent = tempoBonito(musica.posicaoLocal);
+    el.musicFill.style.width = dur ? `${Math.min(100, (musica.posicaoLocal / dur) * 100)}%` : '0%';
+  }
+
+  function desenharMusica() {
+    const e = musica.estado;
+
+    el.musicNow.hidden = !e.atual;
+    el.musicVazio.hidden = !!e.atual;
+    el.musicPlay.textContent = e.pausado ? '▶' : '⏸';
+    el.musicPlay.title = e.pausado ? 'Voltar a tocar para todos' : 'Pausar para todos';
+
+    if (e.atual) {
+      el.musicTitle.textContent = e.atual.titulo;
+      const partes = [e.atual.canal, e.atual.por ? `pedida por ${e.atual.por}` : ''].filter(Boolean);
+      el.musicSub.textContent = partes.join(' · ');
+      if (e.atual.duracao) el.musicTime.textContent = tempoBonito(e.posicao);
+    }
+
+    el.musicCount.textContent = String(e.fila.length);
+    el.musicQueue.innerHTML = '';
+    e.fila.forEach((item, i) => {
+      const li = document.createElement('li');
+      li.innerHTML = `
+        <span class="pos">${i + 1}</span>
+        <span class="info">
+          <span class="nome">${escapeHtml(item.titulo)}</span>
+          <span class="quem">${escapeHtml(item.por || '')}</span>
+        </span>
+        <button class="tirar" type="button" data-id="${item.id}" title="Tirar da fila">✕</button>`;
+      el.musicQueue.appendChild(li);
+    });
+  }
+
+  el.musicQueue.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('.tirar');
+    if (btn && socket) socket.emit('musica:remover', Number(btn.dataset.id));
+  });
+
+  el.musicPlay.addEventListener('click', () => {
+    if (socket) socket.emit('musica:pausar', !musica.estado.pausado);
+  });
+  el.musicNext.addEventListener('click', () => socket && socket.emit('musica:pular'));
+  el.musicClear.addEventListener('click', () => socket && socket.emit('musica:limpar'));
+
+  el.musicVolume.value = String(Math.round(musica.volume * 100));
+  el.musicVolume.addEventListener('input', () => {
+    musica.volume = Number(el.musicVolume.value) / 100;
+    localStorage.setItem(LS_VOL_MUSICA, String(el.musicVolume.value));
+    aoPlayer({ tipo: 'volume', valor: musica.volume });
+  });
+
+  // ── Busca e pedidos ──────────────────────────────────────
+  el.musicForm.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    pedirMusica(el.musicInput.value.trim());
+  });
+
+  function pedirMusica(termo) {
+    if (!termo || !socket) return;
+    el.musicResults.hidden = false;
+    el.musicResults.innerHTML = '<div class="music-erro">Procurando…</div>';
+    if (!musica.painelAberto) abrirPainelDeMusica(true);
+
+    socket.emit('musica:buscar', termo, (resposta) => {
+      el.musicResults.innerHTML = '';
+      if (!resposta || resposta.erro) {
+        el.musicResults.innerHTML = `<div class="music-erro">${escapeHtml((resposta && resposta.erro) || 'Busca falhou.')}</div>`;
+        return;
+      }
+      const achados = resposta.resultados || [];
+      if (!achados.length) {
+        el.musicResults.innerHTML = '<div class="music-erro">Não achei nada com esse nome.</div>';
+        return;
+      }
+      // Link colado: já entra na fila, sem escolher.
+      if (achados.length === 1) {
+        adicionarMusica(achados[0]);
+        return;
+      }
+      achados.forEach((r) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'music-result';
+        btn.innerHTML = `${escapeHtml(r.titulo)}<span>${escapeHtml(r.canal)}${r.duracao ? ' · ' + tempoBonito(r.duracao) : ''}</span>`;
+        btn.addEventListener('click', () => adicionarMusica(r));
+        el.musicResults.appendChild(btn);
+      });
+    });
+  }
+
+  function adicionarMusica(item) {
+    socket.emit('musica:add', item);
+    el.musicResults.hidden = true;
+    el.musicResults.innerHTML = '';
+    el.musicInput.value = '';
+    garantirPlayer();
   }
 
   // ── Chat retrátil ────────────────────────────────────────
@@ -1168,18 +1847,28 @@
 
   // ── Sair de uma transmissão (parar de assistir) ──────────
   let previaFechada = false;
+  let camFechadaLocal = false;
 
   function fecharTransmissao(id) {
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    const base = idBase(id);
+    const camera = ehIdDeCamera(id);
 
-    if (id === myId) {
+    if (base === myId) {
+      if (camera) { camFechadaLocal = true; removeTile(id); return; }
       previaFechada = true;
       removeTile(myId);
       systemMessage('Prévia escondida. Você continua compartilhando para os outros.');
       return;
     }
-    const peer = peers.get(id);
+    const peer = peers.get(base);
     if (!peer) return;
+    if (camera) {
+      peer.camFechada = true;
+      removeTile(id);
+      systemMessage(`Você escondeu a câmera de ${peer.name}. Para voltar, use a barra "Assistindo".`);
+      return;
+    }
     peer.fechada = true;
     if (peer.screenAudioEl) peer.screenAudioEl.muted = true;
     removeTile(id);
@@ -1187,25 +1876,44 @@
   }
 
   function reabrirTransmissao(id) {
-    if (id === myId) {
-      previaFechada = false;
-      if (sharing && screenStream) addTile(myId, `${myName} (você)`, screenStream, { isLocal: true });
+    const base = idBase(id);
+    const camera = ehIdDeCamera(id);
+
+    if (base === myId) {
+      if (camera) {
+        camFechadaLocal = false;
+        if (camAtiva && camStream) {
+          addTile(idDaCamera(myId), `${myName} (você) — câmera`, camStream, { tipo: 'camera', isLocal: true });
+        }
+      } else {
+        previaFechada = false;
+        if (sharing && screenStream) addTile(myId, `${myName} (você)`, screenStream, { isLocal: true });
+      }
+      setViewing('todos');
       return;
     }
-    const peer = peers.get(id);
+    const peer = peers.get(base);
     if (!peer) return;
-    peer.fechada = false;
-    if (peer.screenAudioEl) peer.screenAudioEl.muted = deafened || peer.screenAudioMuted;
-    syncTile(peer);
+    if (camera) {
+      peer.camFechada = false;
+      syncCamTile(peer);
+    } else {
+      peer.fechada = false;
+      if (peer.screenAudioEl) peer.screenAudioEl.muted = deafened || peer.screenAudioMuted;
+      syncTile(peer);
+    }
     // Voltar a assistir não deve esconder as outras: mostramos todas de novo.
     setViewing('todos');
   }
 
-  /** Quem está compartilhando mas está fechado por mim. */
+  /** O que está no ar mas está fechado por mim (telas e câmeras). */
   const fechadas = () => {
-    const lista = [...peers.values()]
-      .filter((p) => p.sharing && p.fechada)
-      .map((p) => ({ id: p.id, nome: p.name }));
+    const lista = [];
+    peers.forEach((p) => {
+      if (p.sharing && p.fechada) lista.push({ id: p.id, nome: p.name });
+      if (p.camera && p.camFechada) lista.push({ id: idDaCamera(p.id), nome: `${p.name} 📷` });
+    });
+    if (camAtiva && camFechadaLocal) lista.unshift({ id: idDaCamera(myId), nome: `${myName} (você) 📷` });
     if (sharing && previaFechada) lista.unshift({ id: myId, nome: `${myName} (você)` });
     return lista;
   };
@@ -1279,6 +1987,15 @@
     e.preventDefault();
     const text = el.chatInput.value.trim();
     if (!text) return;
+
+    // Atalhos de música direto no chat, como nos bots.
+    const pedido = /^\/(?:tocar|play|musica|música)\s+(.+)$/i.exec(text);
+    if (pedido) { pedirMusica(pedido[1].trim()); el.chatInput.value = ''; return; }
+    if (/^\/(?:pular|skip)$/i.test(text)) { socket.emit('musica:pular'); el.chatInput.value = ''; return; }
+    if (/^\/(?:pausar|pause)$/i.test(text)) { socket.emit('musica:pausar', true); el.chatInput.value = ''; return; }
+    if (/^\/(?:voltar|resume)$/i.test(text)) { socket.emit('musica:pausar', false); el.chatInput.value = ''; return; }
+    if (/^\/(?:fila|queue)$/i.test(text)) { abrirPainelDeMusica(true); el.chatInput.value = ''; return; }
+
     socket.emit('chat', text);
     el.chatInput.value = '';
   });
@@ -1317,10 +2034,11 @@
 
   function renderPeers() {
     const all = [
-      { id: myId, name: `${myName} (você)`, muted, deafened, sharing, sharingAudio, eu: true },
+      { id: myId, name: `${myName} (você)`, muted, deafened, sharing, sharingAudio, camera: camAtiva, eu: true },
       ...[...peers.values()].map((p) => ({
         id: p.id, name: p.name, muted: p.muted, deafened: p.deafened,
-        sharing: p.sharing, sharingAudio: p.sharingAudio, silenciado: p.silenciado,
+        sharing: p.sharing, sharingAudio: p.sharingAudio, camera: p.camera,
+        silenciado: p.silenciado,
       })),
     ];
     el.peerCount.textContent = String(all.length);
@@ -1332,20 +2050,25 @@
       if (speaking.has(p.eu ? 'me' : p.id) && !p.muted && !p.silenciado) li.classList.add('speaking');
 
       const tags = [
+        p.camera ? '📷' : '',
         p.sharing ? '🖥️' : '',
         p.sharing && p.sharingAudio ? '🔊' : '',
         p.deafened ? '🎧' : '',
         p.muted ? '🔇' : '',
       ].join('');
 
-      li.innerHTML = `
-        <span class="avatar" style="background:${colorFor(p.name)}">${escapeHtml(initials(p.name))}</span>
-        <span class="peer-name">${escapeHtml(p.name)}</span>
-        <span class="peer-tags">${tags}</span>
+      // O botão de silenciar não existe na sua própria linha: não faz
+      // sentido, e ainda atrapalharia quem lê a linha (inclusive os testes).
+      const botao = p.eu ? '' : `
         <button class="peer-mute${p.silenciado ? ' on' : ''}" type="button" data-id="${p.id}"
                 title="${p.silenciado ? 'Voltar a ouvir' : 'Silenciar só para mim'}">
           ${p.silenciado ? '🔇' : '🔊'}
         </button>`;
+
+      li.innerHTML = `
+        <span class="avatar" style="background:${colorFor(p.name)}">${escapeHtml(initials(p.name))}</span>
+        <span class="peer-name">${escapeHtml(p.name)}</span>
+        <span class="peer-tags">${tags}</span>${botao}`;
       el.peers.appendChild(li);
     });
   }
@@ -1379,6 +2102,7 @@
   // ── Sair ─────────────────────────────────────────────────
   el.leaveBtn.addEventListener('click', () => {
     stopShare();
+    desligarCamera();
     peers.forEach((_, id) => removePeer(id));
     if (micStream) micStream.getTracks().forEach((t) => t.stop());
     if (socket) socket.disconnect();

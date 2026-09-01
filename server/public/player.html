@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<title>Falatório — player</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #player, iframe { width: 100%; height: 100%; border: 0; display: block; }
+  .aviso {
+    position: absolute; inset: 0;
+    display: grid; place-content: center; text-align: center;
+    font: 13px/1.5 "Segoe UI", Roboto, system-ui, sans-serif;
+    color: #9aa1ab; background: #101216; padding: 16px;
+  }
+</style>
+</head>
+<body>
+<div id="player"></div>
+<div id="aviso" class="aviso" hidden></div>
+
+<script>
+/*
+ * Quadro isolado do player.
+ *
+ * Ele existe por um motivo concreto: no app desktop a interface é carregada
+ * de um arquivo local, e o YouTube recusa embutir a partir daí. Servindo esta
+ * página pelo próprio servidor (https), o player ganha uma origem legítima.
+ * A interface principal conversa com este quadro por mensagens.
+ *
+ * Protocolo (interface → aqui):
+ *   { tipo: 'carregar', videoId, posicao }   { tipo: 'tocar' }
+ *   { tipo: 'pausar' }                       { tipo: 'seek', posicao }
+ *   { tipo: 'volume', valor }                { tipo: 'onde' }
+ *
+ * (aqui → interface):
+ *   { tipo: 'pronto' }        { tipo: 'fim', videoId }
+ *   { tipo: 'tempo', posicao, tocando }      { tipo: 'erro', codigo }
+ */
+(() => {
+  'use strict';
+
+  const params = new URLSearchParams(location.search);
+  const MODO_TESTE = params.get('teste') === '1';
+
+  let player = null;
+  let pronto = false;
+  let videoAtual = null;
+  const fila = []; // comandos que chegaram antes do player existir
+
+  const avisar = (msg) => {
+    const el = document.getElementById('aviso');
+    el.textContent = msg;
+    el.hidden = !msg;
+  };
+
+  const paraPai = (msg) => parent.postMessage({ falatorio: true, ...msg }, '*');
+
+  // ── Player de mentira, para testar a sincronia sem o YouTube ───
+  function criarPlayerDeTeste() {
+    let posicao = 0;
+    let tocando = false;
+    let duracao = 180;
+    let ultimo = Date.now();
+
+    setInterval(() => {
+      const agora = Date.now();
+      if (tocando) {
+        posicao += (agora - ultimo) / 1000;
+        if (posicao >= duracao) { tocando = false; paraPai({ tipo: 'fim', videoId: videoAtual }); }
+      }
+      ultimo = agora;
+    }, 100);
+
+    // Espelho do estado, só no modo de teste, para a verificação automática.
+    window.__teste = () => ({ videoId: videoAtual, posicao, tocando });
+    window.__forcarPosicao = (s) => { posicao = s; };
+
+    return {
+      loadVideoById: ({ videoId, startSeconds }) => {
+        videoAtual = videoId;
+        posicao = startSeconds || 0;
+        tocando = true;
+      },
+      playVideo: () => { tocando = true; },
+      pauseVideo: () => { tocando = false; },
+      seekTo: (s) => { posicao = s; },
+      setVolume: () => {},
+      getCurrentTime: () => posicao,
+      getPlayerState: () => (tocando ? 1 : 2),
+      getDuration: () => duracao,
+    };
+  }
+
+  function iniciarPlayerDeVerdade() {
+    const tag = document.createElement('script');
+    tag.src = 'https://www.youtube.com/iframe_api';
+    tag.onerror = () => {
+      avisar('Não consegui carregar o player do YouTube. Confira a conexão.');
+      paraPai({ tipo: 'erro', codigo: 'sem-api' });
+    };
+    document.head.appendChild(tag);
+
+    window.onYouTubeIframeAPIReady = () => {
+      player = new YT.Player('player', {
+        width: '100%',
+        height: '100%',
+        playerVars: {
+          autoplay: 1,
+          controls: 0,       // quem controla é a interface do Falatório
+          disablekb: 1,
+          modestbranding: 1,
+          rel: 0,
+          playsinline: 1,
+          origin: location.origin,
+        },
+        events: {
+          onReady: aoFicarPronto,
+          onStateChange: (e) => {
+            if (e.data === YT.PlayerState.ENDED) paraPai({ tipo: 'fim', videoId: videoAtual });
+          },
+          onError: (e) => {
+            // 101 e 150: o dono do vídeo não permite embutir
+            const embutivel = e.data !== 101 && e.data !== 150;
+            avisar(embutivel
+              ? 'Este vídeo não pôde ser reproduzido.'
+              : 'O dono deste vídeo não permite tocá-lo fora do YouTube.');
+            paraPai({ tipo: 'erro', codigo: e.data, videoId: videoAtual });
+          },
+        },
+      });
+    };
+  }
+
+  function aoFicarPronto() {
+    pronto = true;
+    avisar('');
+    paraPai({ tipo: 'pronto' });
+    while (fila.length) executar(fila.shift());
+
+    setInterval(() => {
+      if (!pronto || !videoAtual) return;
+      try {
+        paraPai({
+          tipo: 'tempo',
+          posicao: player.getCurrentTime(),
+          tocando: player.getPlayerState() === 1,
+          duracao: player.getDuration ? player.getDuration() : 0,
+        });
+      } catch { /* player trocando de vídeo */ }
+    }, 1000);
+  }
+
+  function executar(msg) {
+    if (!pronto) { fila.push(msg); return; }
+    try {
+      switch (msg.tipo) {
+        case 'carregar':
+          videoAtual = msg.videoId;
+          avisar('');
+          player.loadVideoById({ videoId: msg.videoId, startSeconds: msg.posicao || 0 });
+          break;
+        case 'tocar': player.playVideo(); break;
+        case 'pausar': player.pauseVideo(); break;
+        case 'seek': player.seekTo(msg.posicao, true); break;
+        case 'volume': player.setVolume(Math.round(msg.valor * 100)); break;
+        case 'parar':
+          videoAtual = null;
+          player.pauseVideo();
+          break;
+        default: break;
+      }
+    } catch (err) {
+      paraPai({ tipo: 'erro', codigo: 'comando', detalhe: String(err && err.message) });
+    }
+  }
+
+  window.addEventListener('message', (ev) => {
+    const msg = ev.data;
+    if (!msg || !msg.falatorio) return;
+    executar(msg);
+  });
+
+  if (MODO_TESTE) {
+    player = criarPlayerDeTeste();
+    aoFicarPronto();
+  } else {
+    avisar('Carregando o player…');
+    iniciarPlayerDeVerdade();
+  }
+})();
+</script>
+</body>
+</html>

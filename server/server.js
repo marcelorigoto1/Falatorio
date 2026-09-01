@@ -11,6 +11,7 @@ const http = require('http');
 const crypto = require('crypto');
 const express = require('express');
 const { Server } = require('socket.io');
+const musica = require('./musica');
 
 // ── Segredos ──────────────────────────────────────────────
 // A senha NUNCA fica no código. Ela vem de uma variável de ambiente
@@ -69,7 +70,10 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get('/healthz', (_req, res) => res.json({ ok: true, online: users.size }));
 
 // A interface pergunta aqui se precisa mostrar o campo de senha.
-app.get('/config', (_req, res) => res.json({ precisaSenha: ROOM_PASSWORD.length > 0 }));
+app.get('/config', (_req, res) => res.json({
+  precisaSenha: ROOM_PASSWORD.length > 0,
+  buscaDeMusica: musica.temChave(),
+}));
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -81,7 +85,7 @@ const users = new Map();
 
 const publicUser = (u) => ({
   id: u.id, name: u.name, muted: u.muted, sharing: u.sharing,
-  deafened: u.deafened, sharingAudio: u.sharingAudio,
+  deafened: u.deafened, sharingAudio: u.sharingAudio, camera: u.camera,
 });
 
 function sanitizeName(raw) {
@@ -122,6 +126,7 @@ io.on('connection', (socket) => {
       deafened: !!payload.deafened,
       sharing: false,
       sharingAudio: false,
+      camera: false,
     };
     users.set(socket.id, user);
     socket.join(ROOM);
@@ -130,6 +135,9 @@ io.on('connection', (socket) => {
       id: socket.id,
       peers: [...users.values()].filter((u) => u.id !== socket.id).map(publicUser),
     });
+
+    // Quem chega já recebe a música no ponto exato em que ela está.
+    socket.emit('musica:estado', musica.publico());
 
     socket.to(ROOM).emit('peer-joined', publicUser(user));
     io.to(ROOM).emit('system', `${user.name} entrou na sala`);
@@ -156,7 +164,68 @@ io.on('connection', (socket) => {
     user.deafened = !!state.deafened;
     user.sharing = !!state.sharing;
     user.sharingAudio = !!state.sharingAudio;
+    user.camera = !!state.camera;
     io.to(ROOM).emit('peer-state', publicUser(user));
+  });
+
+  // ── Música ──────────────────────────────────────────────
+  const avisarMusica = () => io.to(ROOM).emit('musica:estado', musica.publico());
+  const naSala = () => users.has(socket.id);
+
+  socket.on('musica:buscar', async (termo, ack) => {
+    if (!naSala() || typeof ack !== 'function') return;
+    ack(await musica.buscar(termo));
+  });
+
+  socket.on('musica:add', (item, ack) => {
+    const user = users.get(socket.id);
+    if (!user || !item || !item.videoId) return;
+    const r = musica.adicionar(item, user.name);
+    if (typeof ack === 'function') ack(r);
+    if (r.ok) {
+      avisarMusica();
+      io.to(ROOM).emit('system', `${user.name} colocou "${r.entrada.titulo}" na fila`);
+    }
+  });
+
+  socket.on('musica:pular', () => {
+    const user = users.get(socket.id);
+    if (!user) return;
+    const antes = musica.publico().atual;
+    musica.pular();
+    avisarMusica();
+    if (antes) io.to(ROOM).emit('system', `${user.name} pulou "${antes.titulo}"`);
+  });
+
+  socket.on('musica:pausar', (valor) => {
+    if (!naSala()) return;
+    musica.pausar(valor);
+    avisarMusica();
+  });
+
+  socket.on('musica:seek', (segundos) => {
+    if (!naSala()) return;
+    musica.irPara(segundos);
+    avisarMusica();
+  });
+
+  socket.on('musica:remover', (id) => {
+    if (!naSala()) return;
+    musica.remover(id);
+    avisarMusica();
+  });
+
+  socket.on('musica:limpar', () => {
+    if (!naSala()) return;
+    musica.limpar();
+    avisarMusica();
+  });
+
+  // O player de cada pessoa avisa quando o vídeo acaba; o servidor confere
+  // se realmente acabou antes de passar para a próxima.
+  socket.on('musica:fim', (videoId) => {
+    if (!naSala()) return;
+    if (musica.terminou(videoId)) avisarMusica();
   });
 
   socket.on('disconnect', () => {
@@ -165,8 +234,20 @@ io.on('connection', (socket) => {
     users.delete(socket.id);
     socket.to(ROOM).emit('peer-left', { id: user.id });
     io.to(ROOM).emit('system', `${user.name} saiu da sala`);
+
+    // Sala vazia: a fila de música é zerada. Sem isso, quem entrasse horas
+    // depois cairia no meio da música que o pessoal deixou tocando.
+    if (users.size === 0) musica.limpar();
   });
 });
+
+// Batida de sincronia: de tempos em tempos o servidor diz onde a música
+// está, e cada player corrige a defasagem se tiver escorregado.
+setInterval(() => {
+  const estado = musica.publico();
+  if (!estado.atual || estado.pausado || users.size === 0) return;
+  io.to(ROOM).emit('musica:tique', { videoId: estado.atual.videoId, posicao: estado.posicao });
+}, 5000);
 
 server.listen(PORT, () => {
   console.log(`Falatorio ouvindo em http://localhost:${PORT}`);

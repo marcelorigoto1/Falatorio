@@ -13,7 +13,7 @@
 <div id="gate" class="gate">
   <form id="gate-form" class="gate-card">
     <h1 class="logo">Falatório</h1>
-    <p class="tagline">Voz, texto e tela — só entre amigos.</p>
+    <p class="tagline">Voz, texto, tela e câmera — só entre amigos.</p>
 
     <label for="name-input">Seu nome</label>
     <input id="name-input" type="text" maxlength="24" placeholder="Como te chamam?" autocomplete="off" required />
@@ -49,6 +49,14 @@
       <span class="channel-chevron" id="chat-chevron">▾</span>
     </button>
 
+    <button type="button" class="channel" id="music-btn"
+            title="Fila de música — todo mundo ouve junto">
+      <span class="channel-icon">♪</span>
+      <span class="channel-name">música</span>
+      <span class="channel-badge" id="music-badge" hidden>0</span>
+      <span class="channel-chevron" id="music-chevron">▾</span>
+    </button>
+
     <div class="peers-title">Na sala — <span id="peer-count">0</span></div>
     <ul id="peers" class="peers"></ul>
 
@@ -62,6 +70,15 @@
       <button id="share-btn" class="ctl" type="button">
         <span class="ctl-icon">🖥️</span><span id="share-label">Compartilhar tela</span>
       </button>
+      <button id="cam-btn" class="ctl" type="button" title="Mostrar seu rosto para a galera">
+        <span class="ctl-icon">📷</span><span id="cam-label">Ligar câmera</span>
+      </button>
+
+      <label class="ctl ctl-field" for="cam-select" id="cam-row" hidden
+             title="Qual câmera usar">
+        <span class="ctl-icon">🎥</span>
+        <select id="cam-select"></select>
+      </label>
 
       <label class="ctl ctl-field" for="output-select" id="output-row" hidden
              title="Onde você quer ouvir as vozes e os sons da chamada">
@@ -87,6 +104,11 @@
         </select>
       </label>
 
+      <button id="fiore-btn" class="ctl" type="button"
+              title="Efeitos sonoros nos acontecimentos da sala — vale só para você">
+        <span class="ctl-icon">📣</span><span id="fiore-label">Modo Fiore</span>
+      </button>
+
       <button id="leave-btn" class="ctl danger" type="button">
         <span class="ctl-icon">⏻</span><span>Sair</span>
       </button>
@@ -99,8 +121,8 @@
 
       <section id="stage" class="stage">
         <div id="stage-empty" class="stage-empty">
-          <p>Ninguém está compartilhando tela.</p>
-          <p class="sub">Clique em <strong>Compartilhar tela</strong> para começar.</p>
+          <p>Ninguém está compartilhando tela nem câmera.</p>
+          <p class="sub">Clique em <strong>Compartilhar tela</strong> ou <strong>Ligar câmera</strong> para começar.</p>
         </div>
         <div id="grid" class="grid"></div>
       </section>
@@ -114,6 +136,49 @@
       </form>
     </section>
   </main>
+
+  <!-- ── Painel de música ─────────────────────────────────── -->
+  <aside id="music-panel" class="music-panel" hidden>
+    <div class="music-head">
+      <span>Música</span>
+      <button type="button" id="music-close" title="Fechar o painel">✕</button>
+    </div>
+
+    <div class="music-player">
+      <iframe id="music-frame" title="Player" allow="autoplay; encrypted-media" hidden></iframe>
+      <div id="music-vazio" class="music-vazio">
+        <p>Nada tocando.</p>
+        <p class="sub">Busque por nome ou cole um link do YouTube — todo mundo ouve junto, no mesmo segundo.</p>
+      </div>
+    </div>
+
+    <div id="music-now" class="music-now" hidden>
+      <div class="music-title" id="music-title"></div>
+      <div class="music-sub" id="music-sub"></div>
+      <div class="music-bar"><div class="music-fill" id="music-fill"></div></div>
+      <div class="music-controls">
+        <button type="button" id="music-play" title="Pausar para todos">⏸</button>
+        <button type="button" id="music-next" title="Pular para a próxima">⏭</button>
+        <span class="music-time" id="music-time">0:00</span>
+        <span class="music-vol-icon" title="Seu volume — vale só para você">🔉</span>
+        <input type="range" id="music-volume" min="0" max="100" value="60" title="Seu volume (só para você)" />
+      </div>
+    </div>
+
+    <form id="music-form" class="music-form">
+      <input id="music-input" type="text" autocomplete="off"
+             placeholder="Nome da música ou link do YouTube" />
+      <button type="submit">Buscar</button>
+    </form>
+
+    <div id="music-results" class="music-results" hidden></div>
+
+    <div class="music-queue-title">
+      Na fila — <span id="music-count">0</span>
+      <button type="button" id="music-clear" class="music-clear" title="Esvaziar a fila">limpar</button>
+    </div>
+    <ul id="music-queue" class="music-queue"></ul>
+  </aside>
 
   <div id="audio-sink" class="audio-sink"></div>
 </div>
@@ -133,6 +198,15 @@
           <em>Só a imagem. Sua voz continua indo normalmente.</em>
         </span>
       </label>
+      <label class="sound-opt" id="opt-app" hidden>
+        <input type="radio" name="share-sound" value="app" />
+        <span>
+          <strong>Som só de um aplicativo</strong>
+          <em>Manda apenas o som do programa escolhido — sem as vozes da chamada.</em>
+          <select id="app-select" class="app-select"></select>
+        </span>
+      </label>
+
       <label class="sound-opt">
         <input type="radio" name="share-sound" value="sistema" />
         <span>
