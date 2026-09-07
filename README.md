@@ -200,6 +200,16 @@ O botão **📷 Ligar câmera** manda seu rosto para a sala. Alguns detalhes que
 - Quem tem a câmera ligada aparece com **📷** na lista da sala.
 - Ligar e desligar **não renegocia a conexão** — o canal da câmera já nasce reservado, como o da tela. Ninguém perde o quadro de ninguém quando você mexe na sua.
 
+### Como os quadros se arrumam no palco
+
+Os quadros **não ficam simplesmente lado a lado**. Toda vez que algo muda de tamanho, o app calcula qual número de colunas rende o **maior quadro possível** no espaço que existe — largura e altura ao mesmo tempo, mantendo a proporção 16:9.
+
+Com quatro transmissões num monitor comum isso dá **2×2**, e não uma fileira de quatro tirinhas com metade do palco vazio embaixo: cada quadro fica cerca de **80% mais largo**. Num palco estreito e alto (janela em meia tela, por exemplo), os mesmos quadros empilham numa coluna só.
+
+Isso não dava para resolver só no CSS, porque a escolha depende da largura **e** da altura juntas. O recálculo acontece sozinho quando você redimensiona a janela, esconde o chat, abre o painel de música ou alguém entra e sai — e um quadro sozinho (por foco ou por maximizar) continua esticando para o palco inteiro, como antes.
+
+O chat também ficou mais econômico: ele quase sempre está parado, e cada pixel que não usa vira imagem maior. Se quiser tudo para as transmissões, clique em **# geral** para escondê-lo por completo.
+
 ### Escolhendo a qualidade
 
 | Opção | Resolução | Quadros | Banda de subida | Quando usar |
@@ -379,6 +389,7 @@ Verificado com clientes reais (Chromium automatizado) rodando ao mesmo tempo, e 
 - **música sincronizada**, com o player real trocado por um simulado: os players carregam o mesmo vídeo, ficam a menos de 0,1s de distância um do outro, quem entra depois cai no ponto certo (e não no começo), pausar e pular valem para todos, e um player forçado a escorregar 17s voltou sozinho ao lugar na batida seguinte; a fila é zerada quando a sala esvazia;
 - **som por aplicativo, de ponta a ponta**: com a captura nativa substituída por um tom de 440 Hz no mesmo formato (PCM 16 bits, estéreo, 48 kHz), o áudio percorre IPC → AudioWorklet → WebRTC e **chega no outro participante medido a 441 Hz**, em canal separado da voz; a opção some quando o sistema não a suporta, e parar de compartilhar encerra a captura junto;
 - **sair da transmissão**: o quadro some, o som dela é cortado, as outras seguem normais, a barra oferece o retorno, e a aba fechada some sozinha quando a pessoa para de transmitir;
+- **arrumação dos quadros**: medida por geometria de verdade — quatro transmissões viram 2×2 com cada quadro ~80% mais largo que na fileira antiga, os quatro saem exatamente do mesmo tamanho, 70% do palco vira imagem, nada transborda (o palco não ganha barra de rolagem), num palco estreito e alto os quadros empilham em coluna, fechar o chat os faz crescer na hora, e focar num só continua esticando para o palco inteiro;
 - **webcam**: a conexão carrega mesmo **quatro canais** na ordem certa (voz, som da tela, tela, câmera), a imagem chega do outro lado com frames decodificados de verdade (não só um `<video>` na tela), tela e câmera da mesma pessoa convivem em quadros separados sem se embaralhar, ligar e desligar não muda o número de canais (nada renegocia), desligar a câmera não derruba a transmissão de tela, religar volta a mandar imagem, dá para esconder só a câmera de alguém e reabrir pela barra, e quem sai leva os dois quadros junto; no app Electron a permissão de câmera passa e a prévia sai espelhada em 1280x720.
 
 Também corrigi no caminho um defeito que só aparecia ao parar e recomeçar rápido: um evento atrasado de "faixa muda" derrubava o quadro da transmissão nova. Agora quem manda é o estado anunciado pela pessoa, e os eventos da faixa só pedem uma reavaliação.

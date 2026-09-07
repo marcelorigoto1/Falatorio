@@ -272,7 +272,10 @@ input[type="text"]:focus { border-color: var(--accent); }
 
 .main {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) clamp(200px, 38vh, 340px);
+  /* O chat pede pouco: quase sempre está parado, e cada pixel que ele não usa
+     vira imagem maior nas transmissões. Quem quiser mais espaço ainda pode
+     escondê-lo por completo clicando no #geral. */
+  grid-template-rows: minmax(0, 1fr) clamp(170px, 27vh, 270px);
   min-width: 0;
   min-height: 0;
 }
@@ -356,6 +359,23 @@ input[type="text"]:focus { border-color: var(--accent); }
   height: 100%;
 }
 
+/* Com dois quadros ou mais, quem decide o formato é o cálculo do app.js: ele
+   escolhe o número de colunas que rende o maior quadro possível no espaço
+   disponível (com quatro, quase sempre 2x2) e entrega o tamanho pronto. */
+.grid.calculado {
+  grid-template-columns: repeat(var(--colunas), var(--quadro-w));
+  grid-auto-rows: var(--quadro-h);
+  justify-content: center;
+  align-content: center;
+}
+.grid.calculado .tile {
+  width: var(--quadro-w);
+  height: var(--quadro-h);
+  aspect-ratio: auto;
+  max-height: none;
+  margin: 0;
+}
+
 .tile {
   position: relative;
   background: #000;
@@ -426,6 +446,7 @@ input[type="text"]:focus { border-color: var(--accent); }
    quadro em tela cheia continua limitado ao tamanho da grade. */
 .grid .tile:fullscreen,
 .grid.esticar .tile:fullscreen,
+.grid.calculado .tile:fullscreen,
 .grid.focus-mode .tile:fullscreen {
   aspect-ratio: auto;
   max-width: none;
@@ -439,6 +460,7 @@ input[type="text"]:focus { border-color: var(--accent); }
 }
 .grid .tile:fullscreen video,
 .grid.esticar .tile:fullscreen video,
+.grid.calculado .tile:fullscreen video,
 .grid.focus-mode .tile:fullscreen video {
   width: 100%;
   height: 100%;

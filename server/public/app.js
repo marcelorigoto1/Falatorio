@@ -1946,6 +1946,7 @@
     // Quadro sozinho no palco pode esticar e usar todo o espaço.
     const visiveis = tiles.filter((t) => !t.hidden).length;
     el.grid.classList.toggle('esticar', visiveis === 1);
+    aplicarGrade();
 
     const semAssistir = fechadas();
     el.stageEmpty.hidden = tiles.length > 0 || semAssistir.length > 0;
@@ -1971,6 +1972,61 @@
       el.viewBar.appendChild(criarAba(id, nome, true));
     });
   }
+
+  // ── Arrumação dos quadros no palco ───────────────────────
+  //
+  // Quatro quadros lado a lado num palco largo e baixo viram quatro tirinhas
+  // com metade da tela vazia embaixo. O certo é escolher o número de colunas
+  // que rende o MAIOR quadro possível no espaço que existe — com quatro,
+  // quase sempre 2×2. Isso não dá para decidir só no CSS: depende da largura
+  // E da altura ao mesmo tempo, então a conta é feita aqui.
+  const RAZAO_QUADRO = 16 / 9;
+  const ESPACO = 12;   // o mesmo "gap" da grade, no CSS
+
+  function melhorArranjo(n, W, H) {
+    let melhor = null;
+    for (let colunas = 1; colunas <= n; colunas++) {
+      const linhas = Math.ceil(n / colunas);
+      const larguraDaVaga = (W - ESPACO * (colunas - 1)) / colunas;
+      const alturaDaVaga = (H - ESPACO * (linhas - 1)) / linhas;
+      if (larguraDaVaga <= 0 || alturaDaVaga <= 0) continue;
+      // O quadro guarda a proporção 16:9, então cabe o menor dos dois limites.
+      const largura = Math.min(larguraDaVaga, alturaDaVaga * RAZAO_QUADRO);
+      if (!melhor || largura > melhor.largura + 0.5) {
+        melhor = { colunas, linhas, largura, altura: largura / RAZAO_QUADRO };
+      }
+    }
+    return melhor;
+  }
+
+  function aplicarGrade() {
+    el.grid.classList.remove('calculado');
+    const visiveis = [...el.grid.querySelectorAll('.tile')].filter((t) => !t.hidden);
+    // Um quadro sozinho já estica pelo CSS; e em tela cheia quem manda é ela.
+    if (visiveis.length < 2 || document.fullscreenElement) return;
+
+    const caixa = el.grid.getBoundingClientRect();
+    if (caixa.width < 80 || caixa.height < 80) return;   // palco ainda sem tamanho
+
+    const arranjo = melhorArranjo(visiveis.length, caixa.width, caixa.height);
+    if (!arranjo) return;
+
+    el.grid.style.setProperty('--colunas', String(arranjo.colunas));
+    el.grid.style.setProperty('--quadro-w', `${Math.floor(arranjo.largura)}px`);
+    el.grid.style.setProperty('--quadro-h', `${Math.floor(arranjo.altura)}px`);
+    el.grid.classList.add('calculado');
+  }
+
+  // O palco muda de tamanho por vários motivos — janela, chat retraído,
+  // painel de música, maximizar. Em vez de lembrar de todos, observamos ele.
+  let grade = 0;
+  const reArrumar = () => {
+    cancelAnimationFrame(grade);
+    grade = requestAnimationFrame(aplicarGrade);
+  };
+  window.addEventListener('resize', reArrumar);
+  document.addEventListener('fullscreenchange', reArrumar);
+  if (window.ResizeObserver) new ResizeObserver(reArrumar).observe(el.grid);
 
   function criarAba(id, nome, fechada) {
     const btn = document.createElement('button');
