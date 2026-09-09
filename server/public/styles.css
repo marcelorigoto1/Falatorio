@@ -230,6 +230,11 @@ input[type="text"]:focus { border-color: var(--accent); }
 .ctl.danger:hover { background: rgba(224, 90, 90, .18); border-color: var(--danger); }
 .ctl-icon { font-size: 15px; }
 
+/* Função que este aparelho não tem: o botão continua à vista para explicar
+   por que, em vez de sumir e deixar a pessoa procurando. */
+.ctl.indisponivel, .bc.indisponivel { opacity: .45; }
+.ctl.indisponivel:hover { background: var(--bg-3); }
+
 .ctl-field { padding: 6px 8px 6px 12px; cursor: default; }
 .ctl-field select {
   flex: 1;
@@ -704,3 +709,139 @@ input[type="text"]:focus { border-color: var(--accent); }
 .ctl.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
 .ctl.primary:hover { filter: brightness(1.1); background: var(--accent); }
 .ctl.primary:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ══════════════════════════════════════════════════════════
+   CELULAR
+   ══════════════════════════════════════════════════════════
+   No computador estas três peças nem existem; elas só entram
+   em cena na largura de telefone, mais abaixo. */
+.topbar, .barra-celular, .scrim { display: none; }
+
+/* Alvo de dedo: num aparelho de toque não existe "passar o mouse",
+   então o que só aparecia no hover precisa estar sempre visível. */
+@media (pointer: coarse) {
+  /* Visíveis, mas discretos: eles ficam por cima da imagem o tempo todo. */
+  .tile-tools, .tile-audio { opacity: .7; }
+  .tile-tools:focus-within, .tile-audio:focus-within { opacity: 1; }
+  .peer-mute { opacity: 1; }
+  .tile-hint { display: none; }
+  /* Abaixo de 16px o iPhone dá zoom sozinho ao tocar no campo. */
+  input[type="text"], input[type="password"], .chat-form input, .music-form input { font-size: 16px; }
+  * { -webkit-tap-highlight-color: transparent; }
+}
+
+@media (max-width: 860px) {
+  /* A altura "dinâmica" acompanha a barra de endereço do celular, que
+     aparece e some enquanto se rola. Sem isso, o rodapé fica escondido. */
+  html, body { height: 100dvh; }
+
+  .app {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    position: relative;
+  }
+  .app.com-musica { grid-template-columns: minmax(0, 1fr); }
+
+  .topbar {
+    display: flex; align-items: center; gap: 10px;
+    grid-row: 1;
+    padding: 10px 12px;
+    padding-top: max(10px, env(safe-area-inset-top));
+    background: var(--bg-2);
+    border-bottom: 1px solid var(--line);
+  }
+  .tb-title { flex: 1; font-weight: 600; letter-spacing: -.3px; }
+  .tb-btn {
+    background: var(--bg-3); border: 1px solid var(--line); color: var(--text);
+    border-radius: 9px; width: 38px; height: 38px; font-size: 16px; line-height: 1;
+    display: grid; place-items: center; flex: none;
+  }
+
+  .main { grid-row: 2; position: relative; grid-template-rows: minmax(0, 1fr); }
+
+  /* No celular o chat não divide a tela com as transmissões: ele cobre,
+     porque metade de uma tela de telefone não serve para nenhum dos dois. */
+  .main > .chat {
+    position: absolute; inset: 0; z-index: 30;
+    background: var(--bg); border-top: 0;
+    grid-row: 1;
+  }
+  .main.sem-chat > .chat { display: none; }
+  .chat-form { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+
+  /* A barra lateral vira gaveta: fica fora da tela até alguém chamar. */
+  .sidebar {
+    position: fixed; top: 0; bottom: 0; left: 0;
+    width: min(310px, 86vw);
+    z-index: 60;
+    transform: translateX(-102%);
+    transition: transform .22s ease;
+    border-right: 1px solid var(--line);
+    box-shadow: 0 0 40px rgba(0, 0, 0, .5);
+    padding-top: env(safe-area-inset-top);
+  }
+  .app.gaveta-aberta .sidebar { transform: none; }
+  .app.gaveta-aberta .scrim {
+    display: block; position: fixed; inset: 0; z-index: 50;
+    background: rgba(0, 0, 0, .55);
+  }
+
+  /* O painel de música também cobre a tela inteira. */
+  .music-panel {
+    position: fixed; inset: 0; z-index: 70;
+    border-left: 0;
+    padding-top: env(safe-area-inset-top);
+  }
+
+  .barra-celular {
+    display: grid; grid-row: 3;
+    grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr);
+    gap: 4px;
+    padding: 6px 6px max(6px, env(safe-area-inset-bottom));
+    background: var(--bg-2);
+    border-top: 1px solid var(--line);
+  }
+  .bc {
+    position: relative;
+    display: grid; place-items: center; gap: 2px;
+    background: none; border: 1px solid transparent; border-radius: 10px;
+    color: var(--text-dim);
+    padding: 7px 2px 6px;
+    font-family: inherit;
+    min-height: 52px;
+  }
+  .bc-icone { font-size: 19px; line-height: 1; }
+  .bc-texto { font-size: 10.5px; letter-spacing: .01em; }
+  .bc.active { background: rgba(91, 140, 255, .18); border-color: var(--accent); color: #cddaff; }
+  .bc.muted { background: rgba(224, 90, 90, .16); border-color: var(--danger); color: #ffd2d2; }
+  .bc-badge {
+    position: absolute; top: 3px; right: 50%; transform: translateX(24px);
+    background: var(--accent); color: #fff;
+    font-size: 10px; font-weight: 700; border-radius: 999px;
+    padding: 0 5px; min-width: 16px; text-align: center;
+  }
+
+  /* Sobra menos espaço: o palco encosta nas bordas e os quadros também. */
+  /* Numa tela baixa a lista de ajustes não cabe inteira: ela rola. */
+  .controls { max-height: 58dvh; overflow-y: auto; }
+
+  .stage { padding: 6px; }
+  /* A barra de abas rola com o dedo; o rótulo "Assistindo" só roubaria
+     largura de quem importa, que são os nomes. */
+  .view-bar { padding: 6px 8px; }
+  .view-bar .view-label { display: none; }
+  .view-tab { padding: 6px 12px; font-size: 13px; }
+  .messages { padding: 12px 14px; }
+  .gate-card { padding: 24px 20px; }
+
+  /* Diálogo de compartilhamento cabendo numa tela pequena */
+  .picker-card { max-height: 88dvh; overflow-y: auto; }
+}
+
+/* Telefone deitado: a barra de baixo come altura demais, então ela
+   encolhe e some o rótulo — o ícone basta. */
+@media (max-width: 860px) and (max-height: 460px) {
+  .bc { min-height: 40px; padding: 4px 2px; }
+  .bc-texto { display: none; }
+  .topbar { padding: 5px 10px; }
+}

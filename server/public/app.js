@@ -27,6 +27,26 @@
   };
 
   const desktop = window.falatorio || null; // ponte do Electron (preload.js)
+
+  // ── Celular ──────────────────────────────────────────────
+  //
+  // "É celular" aqui quer dizer: tela estreita E dedo em vez de mouse. Só a
+  // largura não serve (uma janela pequena no PC não é um telefone), e só o
+  // toque também não (existe notebook com tela sensível ao toque).
+  const noToque = matchMedia('(pointer: coarse)').matches;
+  const ehCelular = !desktop && noToque && matchMedia('(max-width: 860px)').matches;
+
+  // Compartilhar TELA é a única coisa que nenhum celular consegue fazer pela
+  // web: nem o Chrome do Android nem o Safari do iPhone entregam a captura de
+  // tela. Não é limitação do Falatório — o navegador não oferece.
+  //
+  // Duas verificações porque os dois lados falham de jeitos diferentes: o
+  // iPhone simplesmente não tem a função, e o Android TEM a função mas ela
+  // nunca entrega nada. Só olhar se a função existe deixaria o Android com um
+  // botão que abre um diálogo e termina em erro.
+  const sistemaDeCelular = !desktop && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const podeCompartilharTela = !sistemaDeCelular
+    && !!(navigator.mediaDevices && typeof navigator.mediaDevices.getDisplayMedia === 'function');
   // ?debug=1 na URL liga os logs de sinalização no console.
   const DEBUG = /[?&]debug=1/.test(location.search);
   const log = (...a) => DEBUG && console.log('[falatorio]', ...a);
@@ -39,6 +59,7 @@
   const LS_CHAT = 'falatorio.chat';
   const LS_FIORE = 'falatorio.fiore';
   const LS_CAM = 'falatorio.camera';
+  const LS_CAM_LADO = 'falatorio.cameraLado';
   const LS_MUSICA = 'falatorio.painelMusica';
   const LS_VOL_MUSICA = 'falatorio.volumeMusica';
 
@@ -49,7 +70,10 @@
     nameInput: $('name-input'), serverInput: $('server-input'),
     serverHint: $('server-hint'), joinBtn: $('join-btn'),
     passwordRow: $('password-row'), passwordInput: $('password-input'),
-    app: $('app'), main: $('main'), connDot: $('conn-dot'),
+    app: $('app'), main: $('main'), connDot: $('conn-dot'), connDot2: $('conn-dot-2'),
+    topbar: $('topbar'), drawerBtn: $('drawer-btn'), scrim: $('scrim'),
+    musicBtn2: $('music-btn-2'), barraCelular: $('barra-celular'),
+    bcVirar: $('bc-virar'), bcTela: $('bc-tela'), bcBadge: $('bc-badge'),
     channelBtn: $('channel-btn'), chatBadge: $('chat-badge'), chatChevron: $('chat-chevron'),
     peers: $('peers'), peerCount: $('peer-count'),
     micBtn: $('mic-btn'), micIcon: $('mic-icon'), micLabel: $('mic-label'),
@@ -88,18 +112,32 @@
   let sharingAudio = false;    // estou enviando o som da minha tela
   let camStream = null;        // MediaStream da webcam (quando ligada)
   let camAtiva = false;        // estou enviando a minha câmera
-  let camId = localStorage.getItem(LS_CAM) || '';  // qual câmera usar
+  let camId = localStorage.getItem(LS_CAM) || '';  // qual câmera usar (no PC)
+  // No celular não se escolhe câmera por id, e sim por lado: frente ou trás.
+  let camLado = localStorage.getItem(LS_CAM_LADO) || 'user';
+  let varias = false;          // o aparelho tem mais de uma câmera?
   let quality = localStorage.getItem(LS_QUALITY) || 'media';
   let bufferMs = Number(localStorage.getItem(LS_BUFFER) ?? 500);
   let viewing = 'todos';       // 'todos' ou o id de quem eu quero assistir
   let maximizado = null;       // id da transmissão ocupando a tela toda
-  let chatVisivel = localStorage.getItem(LS_CHAT) !== 'nao';
+  // Num telefone o chat cobre a tela inteira, então ele começa fechado: quem
+  // entra quer ver a transmissão, não uma parede de texto.
+  const chatSalvo = localStorage.getItem(LS_CHAT);
+  let chatVisivel = chatSalvo ? chatSalvo === 'sim' : !ehCelular;
   let naoLidas = 0;
 
   /** peerId -> { name, muted, deafened, sharing, silenciado, pc, offerer, queue,
    *              makingOffer, ignoreOffer, videoTransceiver, videoStream,
    *              audioEl, watchdog } */
   const peers = new Map();
+
+  // O mesmo pontinho de conexão existe na barra lateral e na barra de cima do
+  // celular; os dois contam a mesma história.
+  const marcarConexao = (estado) => [el.connDot, el.connDot2].forEach((d) => {
+    if (!d) return;
+    d.classList.toggle('on', estado === 'on');
+    d.classList.toggle('off', estado === 'off');
+  });
 
   const sendState = () => socket
     && socket.emit('state', { muted, deafened, sharing, sharingAudio, camera: camAtiva });
@@ -229,7 +267,7 @@
 
     el.gate.hidden = true;
     el.app.hidden = false;
-    el.connDot.classList.add('on');
+    marcarConexao('on');
     renderPeers();
     aplicarLayout();
     aplicarFiore();
@@ -242,14 +280,12 @@
 
   function wireSocket() {
     socket.on('disconnect', () => {
-      el.connDot.classList.remove('on');
-      el.connDot.classList.add('off');
+      marcarConexao('off');
       systemMessage('Conexão com o servidor caiu. Tentando voltar…');
     });
 
     socket.io.on('reconnect', () => {
-      el.connDot.classList.remove('off');
-      el.connDot.classList.add('on');
+      marcarConexao('on');
       systemMessage('Reconectado.');
       socket.emit('join', { name: myName, muted, deafened, password: minhaSenha }, (res) => {
         if (!res || res.error) {
@@ -724,6 +760,9 @@
   el.shareBtn.addEventListener('click', () => (sharing ? stopShare() : startShare()));
 
   async function startShare() {
+    // Sem a API não adianta nem abrir o diálogo: melhor dizer o motivo.
+    if (!podeCompartilharTela) { explicarQueNaoDaTela(); return; }
+
     // A escolha do som acontece aqui, junto com a escolha da tela.
     const escolha = await abrirDialogo();
     if (!escolha) return;
@@ -851,27 +890,30 @@
   // assistindo a uma tela não perde o quadro por causa disso.
   el.camBtn.addEventListener('click', () => (camAtiva ? desligarCamera() : ligarCamera()));
 
+  /**
+   * No celular pedimos o LADO (frente/trás) e não um id: o id muda a cada
+   * sessão em alguns aparelhos, e o iPhone recusa pedidos por id com
+   * frequência. No computador, onde as câmeras têm nome fixo, vale o id.
+   */
+  function pedidoDeCamera() {
+    const base = { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } };
+    if (ehCelular) return { ...base, facingMode: { ideal: camLado } };
+    return { ...base, ...(camId ? { deviceId: { exact: camId } } : {}) };
+  }
+
   async function ligarCamera() {
     if (camAtiva) return;
     try {
-      camStream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: {
-          ...(camId ? { deviceId: { exact: camId } } : {}),
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          frameRate: { ideal: 30, max: 30 },
-        },
-      });
+      camStream = await navigator.mediaDevices.getUserMedia({ audio: false, video: pedidoDeCamera() });
     } catch (err) {
       // A câmera escolhida pode ter sido desconectada: tenta a padrão.
-      if (camId) {
+      if (camId && !ehCelular) {
         camId = '';
         localStorage.removeItem(LS_CAM);
         return ligarCamera();
       }
       systemMessage(err && err.name === 'NotAllowedError'
-        ? 'Não deu para ligar a câmera: falta permissão. Libere o acesso à câmera e tente de novo.'
+        ? 'Não deu para ligar a câmera: falta permissão. Libere o acesso à câmera nos ajustes do navegador e tente de novo.'
         : `Não deu para ligar a câmera: ${err.message}`);
       return;
     }
@@ -882,7 +924,7 @@
     track.addEventListener('ended', () => desligarCamera());
     // Lembra qual câmera deu certo, para a próxima vez.
     const usada = track.getSettings && track.getSettings().deviceId;
-    if (usada) { camId = usada; localStorage.setItem(LS_CAM, usada); }
+    if (usada && !ehCelular) { camId = usada; localStorage.setItem(LS_CAM, usada); }
 
     camAtiva = true;
     camFechadaLocal = false;
@@ -895,6 +937,48 @@
     sendState();
     renderPeers();
     listarCameras().catch(() => {});
+    atualizarBarraCelular();
+  }
+
+  /**
+   * Virar a câmera no celular: frente ↔ trás. A troca é um replaceTrack no
+   * canal que já existe, então ninguém do outro lado perde a imagem.
+   */
+  async function virarCamera() {
+    if (!camAtiva) return;
+    camLado = camLado === 'user' ? 'environment' : 'user';
+    localStorage.setItem(LS_CAM_LADO, camLado);
+
+    let nova;
+    try {
+      nova = await navigator.mediaDevices.getUserMedia({ audio: false, video: pedidoDeCamera() });
+    } catch (err) {
+      camLado = camLado === 'user' ? 'environment' : 'user';  // desfaz
+      localStorage.setItem(LS_CAM_LADO, camLado);
+      systemMessage(`Não consegui virar a câmera: ${err.message}`);
+      return;
+    }
+
+    const antiga = camStream;
+    camStream = nova;
+    const track = nova.getVideoTracks()[0];
+    track.contentHint = 'motion';
+    track.addEventListener('ended', () => desligarCamera());
+    peers.forEach(applyShareTo);
+    peers.forEach(limitarCamera);
+    // Só a fonte mudou: o quadro é o mesmo, é só reapontar o vídeo.
+    addTile(idDaCamera(myId), `${myName} (você) — câmera`, camStream, { tipo: 'camera', isLocal: true });
+    espelharPreviaDaCamera();
+    if (antiga) antiga.getTracks().forEach((t) => t.stop());
+  }
+
+  /**
+   * A câmera da frente é um espelho; a de trás não — o mundo atrás de você
+   * não deve aparecer invertido.
+   */
+  function espelharPreviaDaCamera() {
+    const v = el.grid.querySelector(`.tile[data-peer="${CSS.escape(idDaCamera(myId))}"] video`);
+    if (v) v.classList.toggle('espelhado', !ehCelular || camLado === 'user');
   }
 
   function desligarCamera() {
@@ -908,6 +992,7 @@
     removeTile(idDaCamera(myId));
     sendState();
     renderPeers();
+    atualizarBarraCelular();
   }
 
   /** Só mostra o seletor quando existe mais de uma câmera para escolher. */
@@ -915,8 +1000,11 @@
     if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
     const todas = (await navigator.mediaDevices.enumerateDevices())
       .filter((d) => d.kind === 'videoinput');
-    el.camRow.hidden = todas.length < 2;
-    if (todas.length < 2) return;
+    varias = todas.length > 1;
+    atualizarBarraCelular();
+    // No celular quem faz esse papel é o botão "Virar", com o dedo.
+    el.camRow.hidden = todas.length < 2 || ehCelular;
+    if (todas.length < 2 || ehCelular) return;
 
     el.camSelect.innerHTML = '';
     todas.forEach((d, i) => {
@@ -944,6 +1032,101 @@
       listarCameras().catch(() => {});
     });
   }
+
+  // ── Celular: gaveta e barra de baixo ─────────────────────
+  //
+  // A barra lateral inteira não cabe num telefone, mas também não precisa
+  // sumir: ela vira uma gaveta que entra pela esquerda. O que o polegar usa
+  // toda hora (microfone, surdo, câmera, chat) fica numa barra embaixo, e
+  // esses botões são ATALHOS para os de verdade — clicam neles e copiam o
+  // estado deles. Assim existe um só lugar com a lógica de cada função.
+  const gavetaAberta = () => el.app.classList.contains('gaveta-aberta');
+
+  function abrirGaveta(abrir) {
+    el.app.classList.toggle('gaveta-aberta', abrir);
+    el.scrim.hidden = !abrir;
+  }
+
+  el.drawerBtn.addEventListener('click', () => abrirGaveta(!gavetaAberta()));
+  el.scrim.addEventListener('click', () => abrirGaveta(false));
+  el.musicBtn2.addEventListener('click', () => { abrirGaveta(false); el.musicBtn.click(); });
+
+  // Escolher qualquer coisa dentro da gaveta já fecha ela: no celular,
+  // deixar a gaveta aberta em cima do que você acabou de mudar irrita.
+  document.querySelector('.sidebar').addEventListener('click', (e) => {
+    if (!ehCelular || !gavetaAberta()) return;
+    if (e.target.closest('.ctl-field')) return;   // menus suspensos precisam ficar
+    if (e.target.closest('.ctl, .channel, .peer-mute')) abrirGaveta(false);
+  });
+
+  el.barraCelular.addEventListener('click', (e) => {
+    const btn = e.target.closest('.bc');
+    if (!btn) return;
+    if (btn === el.bcVirar) { virarCamera(); return; }
+    const alvo = btn.dataset.para && document.getElementById(btn.dataset.para);
+    if (alvo) alvo.click();
+  });
+
+  /** Copia para a barra de baixo o estado dos botões de verdade. */
+  function atualizarBarraCelular() {
+    el.barraCelular.querySelectorAll('.bc[data-para]').forEach((btn) => {
+      const alvo = document.getElementById(btn.dataset.para);
+      if (!alvo) return;
+      btn.classList.toggle('active', alvo.classList.contains('active'));
+      btn.classList.toggle('muted', alvo.classList.contains('muted'));
+      const icone = alvo.querySelector('.ctl-icon');
+      const meu = btn.querySelector('.bc-icone');
+      if (icone && meu && btn.dataset.para !== 'channel-btn') meu.textContent = icone.textContent;
+    });
+
+    // O chat não tem classe "ligado": quem sabe se ele está à vista é o layout.
+    const chatAberto = !el.main.classList.contains('sem-chat');
+    document.getElementById('bc-chat').classList.toggle('active', chatAberto);
+    el.bcBadge.hidden = el.chatBadge.hidden;
+    el.bcBadge.textContent = el.chatBadge.textContent;
+
+    // "Virar" só faz sentido com a câmera ligada e mais de uma disponível.
+    el.bcVirar.hidden = !(ehCelular && camAtiva && varias);
+  }
+
+  // Muita coisa mexe nesses botões (mudo, surdo, câmera, transmissão). Em vez
+  // de lembrar de avisar em cada lugar, observamos os botões de verdade.
+  if (window.MutationObserver) {
+    new MutationObserver(atualizarBarraCelular).observe(
+      document.querySelector('.controls'),
+      { attributes: true, attributeFilter: ['class'], subtree: true, childList: true },
+    );
+  }
+
+  // Compartilhar tela não existe em navegador de celular — nem no Chrome do
+  // Android, nem no Safari do iPhone. Dizer isso na cara é melhor do que
+  // deixar um botão que só dá erro.
+  if (!podeCompartilharTela) {
+    el.shareBtn.classList.add('indisponivel');
+    el.shareLabel.textContent = 'Tela (só no PC)';
+    el.shareBtn.title = 'Nenhum navegador de celular deixa transmitir a tela. Pelo celular dá para usar a câmera, a voz e o chat.';
+    el.bcTela.classList.add('indisponivel');
+    // A qualidade só regula a SUA tela transmitida. Sem transmitir tela, o
+    // ajuste não faz nada — some, para não virar botão de enfeite.
+    const linhaQualidade = el.quality.closest('.ctl-field');
+    if (linhaQualidade) linhaQualidade.hidden = true;
+  }
+
+  function explicarQueNaoDaTela() {
+    systemMessage('Transmitir a TELA só funciona no computador: nenhum navegador de celular oferece essa função. Aqui do celular você pode ligar a câmera, falar, mandar mensagem e assistir as telas dos outros normalmente.');
+  }
+
+  // No celular o som só toca depois de um toque na tela. O "Entrar na sala"
+  // é esse toque, mas os áudios nascem depois dele — então, no primeiro
+  // toque seguinte, damos um empurrão em todos de uma vez.
+  let audioDestravado = false;
+  function destravarAudio() {
+    if (audioDestravado) return;
+    audioDestravado = true;
+    el.audioSink.querySelectorAll('audio').forEach((a) => a.play().catch(() => {}));
+  }
+  ['pointerdown', 'touchend', 'keydown'].forEach((ev) =>
+    document.addEventListener(ev, destravarAudio, { once: true, passive: true }));
 
   // ── Som de um aplicativo só (Windows, via app desktop) ───
   //
@@ -1306,7 +1489,8 @@
     video.srcObject = stream;
     // A sua própria câmera aparece espelhada, como num espelho de verdade —
     // é o que todo mundo espera ao se ver na tela.
-    if (ehCamera && isLocal) video.classList.add('espelhado');
+    // ...mas a câmera traseira do celular não: ela mostra o mundo, não você.
+    if (ehCamera && isLocal && (!ehCelular || camLado === 'user')) video.classList.add('espelhado');
     video.play().catch(() => {});
 
     const tag = document.createElement('div');
@@ -1714,6 +1898,7 @@
       ? 'Clique para mostrar o chat'
       : 'Clique para esconder o chat e dar mais espaço às telas';
     atualizarBotoesDosQuadros();
+    atualizarBarraCelular();
   }
 
   el.channelBtn.addEventListener('click', () => {
@@ -1733,6 +1918,7 @@
     naoLidas += 1;
     el.chatBadge.textContent = naoLidas > 99 ? '99+' : String(naoLidas);
     el.chatBadge.hidden = false;
+    atualizarBarraCelular();
   }
 
   // ── Maximizar uma transmissão dentro do app ──────────────

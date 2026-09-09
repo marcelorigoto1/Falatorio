@@ -1,6 +1,6 @@
 # Falatório
 
-Um "Discord caseiro" para você e seus amigos: **chat de voz**, **chat de texto**, **compartilhamento de tela** e **webcam**. Sem cadastro, sem anúncios, sem servidor de terceiros no meio das suas conversas.
+Um "Discord caseiro" para você e seus amigos: **chat de voz**, **chat de texto**, **compartilhamento de tela** e **webcam** — no computador e **no celular**. Sem cadastro, sem anúncios, sem servidor de terceiros no meio das suas conversas.
 
 Voz, tela e câmera vão **direto de um computador para o outro** (P2P, via WebRTC). O servidor só apresenta as pessoas umas às outras e entrega as mensagens de texto — ele nunca vê nem grava seu áudio.
 
@@ -200,6 +200,22 @@ O botão **📷 Ligar câmera** manda seu rosto para a sala. Alguns detalhes que
 - Quem tem a câmera ligada aparece com **📷** na lista da sala.
 - Ligar e desligar **não renegocia a conexão** — o canal da câmera já nasce reservado, como o da tela. Ninguém perde o quadro de ninguém quando você mexe na sua.
 
+### Pelo celular
+
+Basta abrir o endereço do servidor no navegador do telefone — **não precisa instalar nada**. A interface se dobra sozinha: barra de baixo com o que o polegar usa (mudo, surdo, câmera, chat), a lista da sala e os ajustes viram uma **gaveta** no ☰, e chat e música cobrem a tela inteira quando você os abre.
+
+Pelo celular você pode:
+
+- **falar e ouvir** normalmente;
+- **ligar a câmera**, com um botão **🔄 Virar** para alternar entre a frontal e a traseira (a escolha fica lembrada, e a traseira não vem espelhada);
+- **mandar e ler** mensagens no chat, com contador de não lidas no botão;
+- **assistir** as telas e câmeras de quem está no PC, inclusive maximizar e focar numa só;
+- **mexer na fila de música** junto com todo mundo.
+
+**O que NÃO dá pelo celular: transmitir a sua tela.** Nenhum navegador de celular oferece isso — nem o Chrome do Android, nem o Safari do iPhone. Não é limitação do Falatório: a API de captura de tela simplesmente não existe nesses navegadores (no iPhone ela nem aparece; no Android ela aparece mas nunca entrega imagem). Por isso o botão fica apagado e escrito **"Tela (só no PC)"**, e tocar nele explica o motivo em vez de abrir um diálogo que terminaria em erro. Para transmitir tela, é pelo computador.
+
+Duas coisas do servidor importam aqui: ele precisa estar em **HTTPS** (o Render já é), porque nenhum navegador libera microfone e câmera fora disso, e **todos precisam usar o mesmo endereço**.
+
 ### Como os quadros se arrumam no palco
 
 Os quadros **não ficam simplesmente lado a lado**. Toda vez que algo muda de tamanho, o app calcula qual número de colunas rende o **maior quadro possível** no espaço que existe — largura e altura ao mesmo tempo, mantendo a proporção 16:9.
@@ -389,6 +405,7 @@ Verificado com clientes reais (Chromium automatizado) rodando ao mesmo tempo, e 
 - **música sincronizada**, com o player real trocado por um simulado: os players carregam o mesmo vídeo, ficam a menos de 0,1s de distância um do outro, quem entra depois cai no ponto certo (e não no começo), pausar e pular valem para todos, e um player forçado a escorregar 17s voltou sozinho ao lugar na batida seguinte; a fila é zerada quando a sala esvazia;
 - **som por aplicativo, de ponta a ponta**: com a captura nativa substituída por um tom de 440 Hz no mesmo formato (PCM 16 bits, estéreo, 48 kHz), o áudio percorre IPC → AudioWorklet → WebRTC e **chega no outro participante medido a 441 Hz**, em canal separado da voz; a opção some quando o sistema não a suporta, e parar de compartilhar encerra a captura junto;
 - **sair da transmissão**: o quadro some, o som dela é cortado, as outras seguem normais, a barra oferece o retorno, e a aba fechada some sozinha quando a pessoa para de transmitir;
+- **celular**: com o aparelho emulado de verdade (tela de telefone, toque no lugar do mouse e a API de captura de tela removida, que é a situação real do iPhone) — as barras de cima e de baixo aparecem, a lateral vira gaveta que abre no ☰ e fecha ao tocar fora, a página não sai para os lados, o botão de tela avisa "só no PC" e explica o porquê em vez de dar erro, a câmera do celular abre e **chega no PC da galera** (medido no `<video>` do outro lado), o botão "Virar" pede mesmo `facingMode: environment` (verificado espionando a chamada, já que a imagem de teste é igual dos dois lados) e o lado escolhido fica lembrado, a traseira não vem espelhada, quem assiste não perde a imagem durante a troca, o chat começa fechado e abre cobrindo a tela com contador de não lidas, o mudo do polegar aciona o botão de verdade e a sala inteira vê, o painel de música cobre a tela, deitado a barra encolhe e sobra tela para a imagem — e, no mesmo teste, o layout do **computador continua exatamente como era**;
 - **arrumação dos quadros**: medida por geometria de verdade — quatro transmissões viram 2×2 com cada quadro ~80% mais largo que na fileira antiga, os quatro saem exatamente do mesmo tamanho, 70% do palco vira imagem, nada transborda (o palco não ganha barra de rolagem), num palco estreito e alto os quadros empilham em coluna, fechar o chat os faz crescer na hora, e focar num só continua esticando para o palco inteiro;
 - **webcam**: a conexão carrega mesmo **quatro canais** na ordem certa (voz, som da tela, tela, câmera), a imagem chega do outro lado com frames decodificados de verdade (não só um `<video>` na tela), tela e câmera da mesma pessoa convivem em quadros separados sem se embaralhar, ligar e desligar não muda o número de canais (nada renegocia), desligar a câmera não derruba a transmissão de tela, religar volta a mandar imagem, dá para esconder só a câmera de alguém e reabrir pela barra, e quem sai leva os dois quadros junto; no app Electron a permissão de câmera passa e a prévia sai espelhada em 1280x720.
 
